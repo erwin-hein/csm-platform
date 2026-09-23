@@ -481,6 +481,21 @@ The same predicate gates `deliverable_comments` and `deliverable_client_reviews`
 
 This is what drove splitting `deliverables.assignee_user_id` into two independent columns (see §3 Deliverables) — one internal-facing (who's doing the work), one client-facing (who owns validation/sign-off) — since the same deliverable routinely has both, from two different organizations, and a single column couldn't represent that.
 
+### Onboarding
+
+Simpler than the reference tool's 4-step wizard, because two of its steps no longer apply: **no "connect LLM" step** (the org-level key means nothing personal to authorize), and **no "confirm discovered clients" step** (discovery is deferred entirely — a first sync just matches meetings against whatever the analyst already has `engagement_memberships` access to; anything unmatched lands in the same unassigned-meetings backfill screen a returning user would hit, not a special onboarding-only surface).
+
+**No hard finish gate.** The reference tool required Fathom + LLM connected before finishing, because its entire data model *was* the sync pipeline. Ours doesn't work that way — manual Client/Engagement/Deliverable creation is a fully standalone path needing zero integrations. So every connection is recommended, not required: a persistent, dismissible "finish setup" nudge rather than a blocking modal, computed live from what's actually in `connections` rather than tracked as separate wizard state.
+
+```sql
+ALTER TABLE users ADD COLUMN onboarded_at TIMESTAMPTZ;              -- stamped on first sync (wizard or manual) — switches deep-first-sweep to incremental lookback
+ALTER TABLE users ADD COLUMN onboarding_banner_dismissed BOOLEAN DEFAULT false;
+```
+
+The wizard itself: **profile** (display name, timezone — anchors Harvest day windows) → **connect** (Calendar+Fathom first since they drive meeting ingest, then Harvest, then Slack, then Gmail last since it's only used for the already-opt-in CSAT pulse; the OAuth `return_to` round-trip pattern from the reference tool is worth keeping so a connect started mid-wizard lands back on the same step, validated as a same-origin relative path to avoid becoming an open-redirect) → **first sync** (deep-first-sweep 90-day window, same as before) → **LLM preferences nudge** (a skippable pointer at `llm_content_preferences`, since everything defaults off and a new analyst might not otherwise find the settings page).
+
+**Explicitly out of scope for the wizard**: granting `engagement_memberships` (deciding which clients/engagements a new analyst can see) is business knowledge the system can't infer — an ops-side action taken as part of hiring/assignment, entirely separate from the new analyst's own account setup.
+
 ---
 
 ## 4. Explicitly deferred scope (real decisions, not gaps)
@@ -500,10 +515,9 @@ This is what drove splitting `deliverables.assignee_user_id` into two independen
 
 In rough dependency order (most foundational/highest downstream impact first, per the ordering principle used so far):
 
-1. **Onboarding flow** for a new analyst/contractor. **(Next up.)**
-2. **Rules engine** (automated nudges — no_touchpoint, stage_age, hours_burn, etc.). The Harvest "unposted hours pending a missing project" surface and the portal's "client accepted, awaiting analyst confirmation" surface (§3) are both flagged as this engine's first concrete cases once it exists.
-3. **Templates/checklist engine** (kickoff checklists, portal visibility templates).
-4. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
+1. **Rules engine** (automated nudges — no_touchpoint, stage_age, hours_burn, etc.). The Harvest "unposted hours pending a missing project" surface and the portal's "client accepted, awaiting analyst confirmation" surface (§3) are both flagged as this engine's first concrete cases once it exists. **(Next up.)**
+2. **Templates/checklist engine** (kickoff checklists, portal visibility templates).
+3. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
 
 ---
 
@@ -528,3 +542,4 @@ Dated entries for traceability — why something is the way it is, in case it's 
 - **Notion access is org-level, not per-user**: unlike every other integration (Calendar/Fathom/Harvest/Slack/Gmail, all per-user OAuth), the internal playbook lives in one shared company Notion workspace — a single admin-configured token is the right shape, mirroring the single-org-key reasoning already used for Claude billing.
 - **Portal scope expanded well beyond read-only status once discussed through**: an initial pass scoped the portal to Deliverables-only, no comments, no client-side write capability at all. Erwin pushed for two-way async comms (a client-facing comment thread) and a UAT-style review/flag capability (Accepted/Blocked/Rejected) as the real "killer feature," not an afterthought — the portal's value is visibility *and* collaboration. Comments live in a structurally separate table from internal activity (never a visibility flag on one shared table), and review verdicts never auto-mutate `pipeline_status` — same "explicit human decision" principle already applied to health/stage.
 - **`deliverables.assignee_user_id` split into two columns**: `internal_assignee_user_id` (who's doing the work) and `client_owner_user_id` (who owns client-side validation/sign-off) are independent and routinely both populated for the same deliverable — one column couldn't represent a dev/analyst and a client QA owner simultaneously. This also became the key for per-client-user portal visibility scoping (`engagement_memberships.viewer_scope`): a project lead sees everything in an engagement, while a client-side QA/analyst user sees only deliverables where they're the `client_owner_user_id` (plus ancestors, for context) — the client's own org structure, not something Shearwater imposes.
+- **Onboarding has no hard finish gate**: the reference tool required Fathom + LLM connected to finish, because its data model *was* the sync pipeline. Ours isn't — manual creation works standalone, and there's no per-user LLM credential to require anymore anyway (org-level key). Confirmed explicitly by Erwin rather than assumed: every integration is a recommended, dismissible nudge, never a blocker.
