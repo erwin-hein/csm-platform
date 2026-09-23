@@ -39,7 +39,7 @@ An earlier attempt at this same rebuild stalled when a developer resource fell t
 | 14 | **Claude/LLM billing** | Single **org-level Anthropic API key** for the whole app (not per-user subscription OAuth à la Hao's `claude setup-token` hack, not per-user/per-workspace API keys) — chosen pragmatically given ops/finance uncertainty about how the company wants this billed. Per-user cost attribution kept independently in an app-level `llm_usage` log regardless of the shared credential, so this is reversible later (splitting into per-user/per-workspace keys) without touching anything above the credential-resolution layer. Two-tier model choice, per-feature budget/timeout discipline, and cache-first-never-on-GET are all explicitly ported principles from Hao's `llm.py`. |
 | 15 | **LLM content generation is opt-in, per-user default + per-engagement override, per-kind** | See §3 `llm_content_preferences`. Default is **off** (a real spend-control lever, not a feature everyone must opt out of) — absence of a preference row cascades to "disabled," so a brand-new user starts with everything off until they explicitly enable specific kinds. |
 | 16 | **Authentication** | Hand-rolled (not a managed provider like WorkOS), chosen for MVP speed since internal users are the near-term priority and external users are out of scope for now anyway. **Internal** (`analyst`/`contractor`/`ops`/`admin`): Google OAuth restricted to `@shearwaterdata.com`, verified server-side (the `hd` hint is not enforcement). **External** (`client_external`): passwordless email magic-link owned entirely by the app — deferred until the client-portal work begins (see §4), since it's the same piece of work as that feature. First-login bootstrap via an `ADMIN_EMAILS` env var seeding initial `internal_role='admin'` rows (avoids a chicken-and-egg problem); everyone else defaults to `analyst`. Session = signed httponly secure cookie holding the user id. CSRF via origin/referer check on state-changing routes, same principle as Hao's tool. Worth carrying over conceptually (not yet built): Hao's actor-vs-scope split for admin "act as another user" impersonation with audit trail. |
-| 17 | **OAuth/connections** (Calendar, Fathom, Harvest, Slack) | Per-user-per-provider token storage, same shape as Hao's `connections` table, FK'd to real `users.id` instead of email strings. |
+| 17 | **OAuth/connections** (Calendar, Fathom, Harvest, Slack, Gmail) | Per-user-per-provider token storage, same shape as Hao's `connections` table, FK'd to real `users.id` instead of email strings. Gmail added for CSAT delivery (draft-only, `gmail.compose` scope, never a send scope). **Notion is the one exception** — org-level, not per-user (single admin-configured token, one shared company workspace being read), same reasoning as the single Claude API key. See §3 Knowledge base. |
 | 18 | **Background jobs** | A real job queue (Celery/RQ-class), replacing Hao's LaunchAgent/cron/daemon-thread pattern — needed given multiple analysts' syncs running concurrently on a shared server rather than one person's Mac. |
 | 19 | **Migration tooling** | Alembic (implied by "real Postgres migrations," not yet exercised in detail). |
 
@@ -341,7 +341,7 @@ Three more `generated_content_kinds`: `internal_digest`, `weekly_digest`, `csat_
 - **Internal digest** (Friday, `entity_type='user'`): scoped to the analyst's own owned Engagements. Bucketing is **live**, never a stale persisted signal — terminal engagements excluded entirely, Wrap-Up gets its own bucket, everything else buckets by current health. Delivered via the Slack compose→schedule→undo mechanism from the Slack integration section.
 - **Weekly digest** (Monday, `entity_type='user'`): movers / drifting (with why) / concrete priorities / watch-outs, drawing on multi-channel recency (not call-only). No delivery mechanism — it's a page, not something sent anywhere.
 - **Few-shot self-tuning** (both digests): generation pulls the analyst's last ≤2 rows with `sent_at IS NOT NULL` for that `(user, kind)` as style examples, so the tool learns their actual edited voice instead of needing hand-tuned prompt style rules.
-- **CSAT pulse** (`entity_type='engagement'`): triggers on milestones (kickoff checklist complete, hours burn crosses 50%, stage → Wrap-Up — trigger vocabulary stays app-level config; a `cert_done` trigger is deferred pending the Cert module decision). Delivered as a plain **Gmail draft**, not Slack — deliberately more conservative than the Slack mechanism (no scheduled auto-send/undo-window at all, since asking a client directly for feedback is more sensitive than a call recap; a human must open Gmail and send it themselves). Needs Gmail added as a fifth OAuth provider in `connections` (`gmail.compose` scope only, draft-only, mirroring the reference tool's never-auto-send rule).
+- **CSAT pulse** (`entity_type='engagement'`): triggers on milestones (kickoff checklist complete, hours burn crosses 50%, stage → Wrap-Up — trigger vocabulary stays app-level config; no `cert_done` trigger — the Cert module is out of MVP scope, see §4). Delivered as a plain **Gmail draft**, not Slack — deliberately more conservative than the Slack mechanism (no scheduled auto-send/undo-window at all, since asking a client directly for feedback is more sensitive than a call recap; a human must open Gmail and send it themselves). Needs Gmail added as a fifth OAuth provider in `connections` (`gmail.compose` scope only, draft-only, mirroring the reference tool's never-auto-send rule).
 
 ```sql
 CREATE TABLE csat_triggers_fired (      -- once-only firing guard, independent of the opt-in question above
@@ -351,6 +351,57 @@ CREATE TABLE csat_triggers_fired (      -- once-only firing guard, independent o
   PRIMARY KEY (engagement_id, trigger_key)
 );
 ```
+
+### Ask — the agentic assistant
+
+In-process ReAct loop, deliberately **not** exposed as an MCP server — keeps per-user auth, budget, and (most importantly) the *structural* propose→confirm gate on writes enforceable server-side rather than trusted to the model. **Conversations are portfolio-wide** (not bound to one engagement at creation): the dominant use case is cross-engagement ad hoc questions ("who was Jack again?", "what's still open across my book?"), which demands the assistant be able to search and resolve across everything the user can see, not one engagement at a time.
+
+```sql
+CREATE TABLE chat_conversations (
+  id UUID PRIMARY KEY,
+  user_id UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE chat_messages (
+  id UUID PRIMARY KEY,
+  conversation_id UUID REFERENCES chat_conversations(id),
+  role TEXT NOT NULL,               -- 'user' | 'assistant'
+  content TEXT,
+  proposal JSONB,                   -- present only on a turn proposing a write: {action, resolved_entity_type, resolved_entity_id, params}
+  proposal_status TEXT,             -- 'pending' | 'confirmed' | 'executed' | 'failed' | 'discarded'
+  observation JSONB,                -- truncated tool-read result, if this turn was a read
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+**The core safety property**: each assistant turn is one strictly-validated JSON dispatch (`reply` / `read` / `action`), capped at a couple of rounds per turn; a malformed or unrecognized dispatch degrades to a plain reply and can structurally never fall through to a write. For a proposed `action`, the model references entities the way a person would (by name/description); a **server-side resolver** — scoped through the same `engagement_memberships` visibility as the rest of the app, no elevated access just for being a chat interface — turns that into a real, ownership-checked id *before* the confirm card is shown. An ambiguous reference returns a clarification question, never a guess (same "refuse to guess" principle as meeting matching). Confirm re-validates both `proposal_status='pending'` (blocks a double-execution race) and that the resolved entity is still visible to the user at confirm time, not just propose time. Execution runs through the normal service function — same event emission as any other write — so Ask bypasses none of the platform's usual discipline. A failed execute stays `pending` for retry; editing and re-asking discards the stale proposal branch but never un-executes something already confirmed.
+
+**Reads**: a live portfolio digest reusing the *exact same* service function the board/Home surfaces call (never a separate computation, so Ask and the UI can't disagree about a client's health or open items); a **contact lookup** across every client the user can see (search `client_contacts` by name — the "who was Jack again?" case specifically needs this, not just the digest); and doc search over `doc_chunks` (below).
+
+**Ask does not use `llm_content_preferences`** — that opt-in system exists to gate *background* spend a user didn't directly trigger; opening a chat and typing a question is already about as directly-chosen as spend gets. Cost control here is the loop cap and the standard per-feature budget/timeout table, not a separate toggle.
+
+### Knowledge base (doc search)
+
+```sql
+CREATE TABLE doc_chunks (
+  id UUID PRIMARY KEY,
+  source_prefix TEXT NOT NULL,    -- 'web' | 'internal'
+  source_id TEXT,                 -- Notion page id for 'internal'; a URL slug for 'web'
+  title TEXT,
+  url TEXT,                       -- ONLY ever populated for source_prefix='web' — see below
+  content TEXT NOT NULL,          -- chunked, full-text indexed (Postgres tsvector)
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Two sources, two ingestion mechanisms, one table:
+- **`web`**: public Omni vendor documentation (`docs.omni.co`) — a weekly cron does one GET of Omni's published docs feed, replace-on-success. Kept as-is; still relevant since Shearwater is Omni-focused.
+- **`internal`**: the company's internal playbook, which currently lives in Notion — a scheduled sync job (reusing the existing job-queue infrastructure, not a new mechanism) pulls specified pages, chunks them, and upserts into `doc_chunks` keyed by Notion page id (idempotent re-sync). Ships as working plumbing now; populated once actual page ids are pointed at it. Treated as readable by all internal staff with no extra ACL for now — worth a finer-grained rule later only if some playbook content turns out to need restricting.
+
+**`url` is only ever populated for `web` rows** — this is what makes "internal content never leaks into a client-facing link" a structural property rather than a convention someone has to remember: draft-generation has nothing to cite from an internal row even if it matched a search, because there's no URL there to cite.
+
+**A third source (`cert`) was deliberately never added** — the Cert/training module is out of MVP scope entirely (§4), not merely deferred pending a decision.
 
 ---
 
@@ -363,6 +414,7 @@ CREATE TABLE csat_triggers_fired (      -- once-only firing guard, independent o
 | Per-user/per-workspace Claude API keys | Ops/Finance haven't decided how they want AI spend billed; a single org key + per-user `llm_usage` log keeps the decision reversible without any rework. | Finance wants true chargeback, or per-team budget ceilings. |
 | External (`client_external`) authentication / client-facing portal | Not the MVP's primary use case; internal analysts are the first test users. | Explicitly picked up as its own Open item (§5) — this is where the magic-link flow gets built. |
 | Managed auth-as-a-service (e.g. WorkOS) | Hand-rolled Google OAuth is faster to ship for the internal-only MVP. | If/when the external-auth build turns out heavier than expected, worth revisiting. |
+| Cert/training module | Explicitly cut from MVP scope by Erwin — not merely low-priority, a decided no. | Not currently expected to revisit; would need a fresh ask if training/certification becomes a real product need. |
 
 ---
 
@@ -370,13 +422,11 @@ CREATE TABLE csat_triggers_fired (      -- once-only firing guard, independent o
 
 In rough dependency order (most foundational/highest downstream impact first, per the ordering principle used so far):
 
-1. **Ask / agentic assistant** — pattern worth keeping from Hao's tool: propose→confirm, server-side resolvers (never let the model invent an id), structural can't-reach-a-write degradation. **(Next up.)**
-2. **Client-facing portal** — where the deferred external magic-link auth gets built; visibility already falls out of `engagement_memberships` viewer grants, so this is mostly UI + the auth flow.
-3. **Onboarding flow** for a new analyst/contractor.
-4. **Rules engine** (automated nudges — no_touchpoint, stage_age, hours_burn, etc.). The Harvest "unposted hours pending a missing project" surface (§3) is flagged as this engine's first concrete case once it exists.
-5. **Cert/training module** — Hao's platform-map inventory says "probably leave behind" (Omni-specific content). Needs an explicit yes/no rather than a silent drop.
-6. **Templates/checklist engine** (kickoff checklists, portal visibility templates).
-7. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
+1. **Client-facing portal** — where the deferred external magic-link auth gets built; visibility already falls out of `engagement_memberships` viewer grants, so this is mostly UI + the auth flow. **(Next up.)**
+2. **Onboarding flow** for a new analyst/contractor.
+3. **Rules engine** (automated nudges — no_touchpoint, stage_age, hours_burn, etc.). The Harvest "unposted hours pending a missing project" surface (§3) is flagged as this engine's first concrete case once it exists.
+4. **Templates/checklist engine** (kickoff checklists, portal visibility templates).
+5. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
 
 ---
 
@@ -396,3 +446,6 @@ Dated entries for traceability — why something is the way it is, in case it's 
 - **Internal Slack back-channel scoped to Engagement, not Client**: at Erwin's explicit reasoning — an internal discussion channel has no guaranteed continuity across engagement boundaries (a channel from a closed engagement may or may not carry into a future one with the same client), so it follows the same ephemeral-by-default rule as the client-facing channel and Harvest project mapping.
 - **Slack health-signal value questioned, then kept**: Erwin wasn't sure how useful multi-channel Slack-derived health really is, but agreed it's worth keeping since it's computed with zero LLM cost — real value specifically for engagement types with significant between-call Slack activity (retainers, ongoing partnerships), smaller for short call-driven engagements, essentially free either way.
 - **CSAT pulse opt-in stays personal, not org-mandated**: an initial proposal exempted CSAT from the per-user `llm_content_preferences` toggle (via `generated_content_kinds.default_enabled`/`allow_user_override` flags) on the theory that client feedback collection is a company policy decision, not personal productivity. Erwin rejected this — whether a specific client is inclined to answer a survey is an analyst+Ops judgment call, not the platform's to force, and mandating it would generate noise for little value in cases where it's unneeded. CSAT resolves through the exact same opt-in cascade as every other `generated_content` kind; the proposed extra columns were dropped as unneeded complexity.
+- **Doc search corpus decided source-by-source, not as one blanket call**: the reference tool blended three sources (public Omni vendor docs, an internal playbook, cert/training material) into one index. Broken apart on inspection: `web` (Omni docs) kept as-is since Shearwater is still Omni-focused; `internal` (playbook) gets the structure built now even without content, since the actual pages exist in the company's Notion workspace and just need pointing at; `cert` dropped entirely as a direct consequence of cutting the Cert module from MVP scope (a decided no, not a deferred maybe).
+- **Cert/training module cut from MVP entirely**: previously an open "needs an explicit yes/no" item; Erwin decided no. Moved from Open (§5) to Deferred (§4) as a real decision, not left ambiguous.
+- **Notion access is org-level, not per-user**: unlike every other integration (Calendar/Fathom/Harvest/Slack/Gmail, all per-user OAuth), the internal playbook lives in one shared company Notion workspace — a single admin-configured token is the right shape, mirroring the single-org-key reasoning already used for Claude billing.
