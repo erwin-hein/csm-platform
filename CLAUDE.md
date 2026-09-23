@@ -122,7 +122,8 @@ CREATE TABLE engagements (
   stage TEXT NOT NULL,                 -- validated app-side against the type's stage_vocab
   status TEXT DEFAULT 'active',        -- active | paused | complete | cancelled
   owner_user_id UUID REFERENCES users(id),
-  slack_channel_id TEXT,               -- engagement-scoped, ephemeral by design
+  slack_channel_id TEXT,               -- engagement-scoped, ephemeral by design — client-facing channel
+  internal_slack_channel_id TEXT,      -- engagement-scoped internal back-channel (never client-facing, never feeds client_contacts)
   harvest_project_id TEXT,             -- engagement-scoped, ephemeral by design
   expected_scope JSONB,                -- generalizes Hao's expected_phases
   health TEXT,                         -- cached, recomputed — never hand-written
@@ -221,6 +222,23 @@ CREATE TABLE engagement_signals (
 );
 ```
 Client-level health = read-time rollup over active Engagements' signals, never stored.
+
+### Slack integration
+
+Two very different mechanisms, both per-user OAuth (not a bot token): **reads** feed health signals and the contact roster, almost entirely free of LLM cost; **writes** are the delivery mechanic for outbound client messages (post-call follow-ups and anything else a user sends to a client via the app).
+
+**Reads — deterministic signal computation, not summarization.** Channel/DM/group-DM history is pulled to compute multi-channel recency (`engagement_signals.channel_breakdown`) — last attended call, client-facing channel activity, internal back-channel activity, DM/support-channel mentions, folded via `min()` into the one automatic health signal. This is pure math, zero LLM calls — genuinely useful specifically for engagement types where meaningful client interaction happens between calls (a support retainer, an ongoing partnership), less so for short call-driven engagements, and cheap enough that there's no real reason to gate it either way. There is deliberately **no standalone "summarize this Slack channel" LLM feature** — Slack content instead supplies raw context *into* already-planned generation features (a pre-call briefing's "recent Slack" section, a digest's context), never summarized on its own.
+
+- **A read failure is never treated as genuine silence.** A throttled/failed `conversations.history` call must not be read as "the channel has gone quiet" — health computation keeps the prior persisted signal on a failed pull, and only trusts a successful-but-empty read as real quiet. (This exact conflation caused a false "stalled" flag on an actively-engaged client in the reference tool.)
+- **Contact roster derivation unions across all of a Client's Engagements**, not just the active one — since contacts are Client-scoped but the channel they're derived from is Engagement-scoped, the roster-refresh job iterates every Engagement belonging to a Client and unions channel membership from each one's `slack_channel_id` into `client_contacts`. Only the client-facing channel feeds this — `internal_slack_channel_id` never does, since its members are staff by definition.
+- **Staff-vs-client-contact filtering** when scanning channel membership: by domain, plus a "ubiquity" heuristic (a config threshold — appears in ≥N distinct client channels = probably internal staff). This catches Shearwater's own team *and* the Omni team without needing either hardcoded — anyone who shows up across many different clients' channels gets filtered the same way.
+- **Internal back-channel is Engagement-scoped, like the client-facing channel** — not Client-scoped — because there's no guarantee an internal discussion channel survives past the engagement that spawned it; there may or may not be a next engagement to inherit it.
+- Reads are cached short-TTL and fetched async off the initial page render (never block a page load on a live Slack call), matching the frontend's async-off-page-load pattern.
+
+**Writes — one delivery mechanism, always in-app, regardless of LLM opt-in.** A single compose-box UI schedules a message with a short undo window (message composed and finalized *before* scheduling; the delay is purely an undo buffer, never a writing deadline). Whether the compose box opens **pre-filled** (from an approved `generated_content` post-call draft) or **blank** (typed fresh) is the *only* thing the LLM opt-in setting changes — the delivery mechanism itself is identical either way, and is the **recommended default path for every user**, not merely available to opted-out ones. Reasoning: leaving the app to post directly in Slack risks the CSM getting pulled into unrelated unread-notification threads and never actually sending the follow-up (or sending it hours late) — staying on-platform is a real workflow-efficiency win, not just a nice-to-have. Nothing prevents posting directly in Slack instead, but the product actively steers toward the in-app path.
+
+- **Reads and writes fail asymmetrically, on purpose.** A dead/expired token degrades a *read* silently (don't let a Slack outage sink other features) but must surface loudly and redirect to reconnect on a *write* — a client-facing message must never silently fail to send.
+- **Scope drift needs a reconnect path, not a raw error.** Different features need different OAuth scopes (channel reads, DM reads, name/email resolution, writes); a token created before a scope was added can't silently do the new thing — `missing_scope` routes to reconnect.
 
 ### Events — the spine
 
@@ -331,15 +349,14 @@ CREATE TABLE llm_content_preferences (
 
 In rough dependency order (most foundational/highest downstream impact first, per the ordering principle used so far):
 
-1. **Slack integration** — read/write scopes, engagement-scoped channel binding mechanics, multi-channel recency signal computation, contact-roster refresh, DM/support-channel attribution. Also owns the delivery mechanics (Slack-first scheduled-send-with-undo) that post-call drafting punted to it. **(Next up.)**
-2. **Digests** (Friday internal, Monday personal, CSAT pulses) — will reuse the `generated_content`/opt-in pattern above.
-3. **Ask / agentic assistant** — pattern worth keeping from Hao's tool: propose→confirm, server-side resolvers (never let the model invent an id), structural can't-reach-a-write degradation.
-4. **Client-facing portal** — where the deferred external magic-link auth gets built; visibility already falls out of `engagement_memberships` viewer grants, so this is mostly UI + the auth flow.
-5. **Onboarding flow** for a new analyst/contractor.
-6. **Rules engine** (automated nudges — no_touchpoint, stage_age, hours_burn, etc.). The Harvest "unposted hours pending a missing project" surface (§3) is flagged as this engine's first concrete case once it exists.
-7. **Cert/training module** — Hao's platform-map inventory says "probably leave behind" (Omni-specific content). Needs an explicit yes/no rather than a silent drop.
-8. **Templates/checklist engine** (kickoff checklists, portal visibility templates).
-9. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
+1. **Digests** (Friday internal, Monday personal, CSAT pulses) — will reuse the `generated_content`/opt-in pattern and the Slack delivery mechanism above. **(Next up.)**
+2. **Ask / agentic assistant** — pattern worth keeping from Hao's tool: propose→confirm, server-side resolvers (never let the model invent an id), structural can't-reach-a-write degradation.
+3. **Client-facing portal** — where the deferred external magic-link auth gets built; visibility already falls out of `engagement_memberships` viewer grants, so this is mostly UI + the auth flow.
+4. **Onboarding flow** for a new analyst/contractor.
+5. **Rules engine** (automated nudges — no_touchpoint, stage_age, hours_burn, etc.). The Harvest "unposted hours pending a missing project" surface (§3) is flagged as this engine's first concrete case once it exists.
+6. **Cert/training module** — Hao's platform-map inventory says "probably leave behind" (Omni-specific content). Needs an explicit yes/no rather than a silent drop.
+7. **Templates/checklist engine** (kickoff checklists, portal visibility templates).
+8. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
 
 ---
 
@@ -355,3 +372,6 @@ Dated entries for traceability — why something is the way it is, in case it's 
 - **Harvest project resolution**: deliberately kept as a hard block (no fallback project) at Erwin's explicit request — an engagement missing its Harvest project mapping is a real Ops process gap (they haven't created the project yet) that should surface loudly, not be silently routed around. Entries are still fully computed and stored (`blocked_reason`), so backfill is automatic once Ops creates the project.
 - **Frontend**: server-rendered + htmx chosen over a SPA after an explicit tradeoffs discussion (feature limitations, UI customization, responsiveness, reversibility) — none of the app's actual planned features need a component framework, and the single-codebase/no-build-pipeline simplicity matches every other choice in this design; kept reversible per-page as long as business logic stays decoupled from rendering.
 - **Status ladder redesign**: the original single linear ladder (`handled → approved → drafted → awaiting_fathom → ready`) was flawed — it implicitly assumed LLM drafting as the default path for every call. Once drafting became opt-in (per Erwin: he doesn't use it personally, others depend on it heavily — "a great lever for efficient spending"), this was split into two independent axes: universal call-completion status, and a conditional draft-status sub-state that only exists when the opt-in resolves true. Opt-in itself was then made per-kind (not one coarse flag) at Erwin's request, since he wants post-call drafting on but pre-call briefings off personally — `llm_content_preferences` replaced the earlier flat boolean columns on `users`/`engagements`.
+- **Slack write delivery is always in-app, not conditional on LLM opt-in**: an earlier pass framed the compose→schedule→undo mechanism as "available but optional" for opted-out users, implying they'd just post in Slack directly. Erwin pushed back — staying on-platform avoids the real risk of a CSM opening Slack, getting pulled into unrelated unread threads, and delaying or forgetting the follow-up entirely. The mechanism is now the recommended default for everyone; LLM opt-in only decides whether the compose box starts pre-filled or blank, not whether the in-app path is used at all.
+- **Internal Slack back-channel scoped to Engagement, not Client**: at Erwin's explicit reasoning — an internal discussion channel has no guaranteed continuity across engagement boundaries (a channel from a closed engagement may or may not carry into a future one with the same client), so it follows the same ephemeral-by-default rule as the client-facing channel and Harvest project mapping.
+- **Slack health-signal value questioned, then kept**: Erwin wasn't sure how useful multi-channel Slack-derived health really is, but agreed it's worth keeping since it's computed with zero LLM cost — real value specifically for engagement types with significant between-call Slack activity (retainers, ongoing partnerships), smaller for short call-driven engagements, essentially free either way.
