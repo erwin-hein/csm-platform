@@ -306,7 +306,10 @@ CREATE TABLE generated_content (
   payload JSONB NOT NULL,       -- shape varies entirely by kind
   model_used TEXT,
   generated_by_user_id UUID REFERENCES users(id),
-  generated_at TIMESTAMPTZ DEFAULT now()
+  generated_at TIMESTAMPTZ DEFAULT now(),
+  finalized_payload JSONB,      -- the human-edited version actually sent, if any (feeds digest few-shot self-tuning)
+  sent_at TIMESTAMPTZ,          -- populated only when actually delivered
+  input_hash TEXT               -- generation skipped if unchanged since the last run over the same inputs
 );
 
 CREATE TABLE llm_content_preferences (
@@ -331,6 +334,24 @@ CREATE TABLE llm_content_preferences (
 - **Draft status** (conditional — only meaningful/shown when the opt-in resolves true for that user+engagement+kind): `none → awaiting_fathom → drafted → approved`, derived from transcript presence + `generated_content` row existence + an approval marker. Never conflated with call completion.
 - "Approve" (finalize draft, write typed action items, trigger delivery) only exists when a draft exists. A **separate, LLM-free "mark handled" path** must fully exist for opted-out engagements — can still manually write `action_items` and send a manual note, none of it touching `generated_content`.
 
+### Digests & CSAT pulses
+
+Three more `generated_content_kinds`: `internal_digest`, `weekly_digest`, `csat_pulse` — all three opt-in through the **exact same, uniform** `llm_content_preferences` cascade as drafts/briefings (engagement override → user default → off). An earlier pass considered exempting CSAT from personal opt-out as an org-mandated process; rejected (see §6) — whether a given engagement's client wants to be surveyed is an analyst+Ops judgment call, not a platform-enforced default, and forcing it on would generate noise with little value for clients who aren't inclined to answer.
+
+- **Internal digest** (Friday, `entity_type='user'`): scoped to the analyst's own owned Engagements. Bucketing is **live**, never a stale persisted signal — terminal engagements excluded entirely, Wrap-Up gets its own bucket, everything else buckets by current health. Delivered via the Slack compose→schedule→undo mechanism from the Slack integration section.
+- **Weekly digest** (Monday, `entity_type='user'`): movers / drifting (with why) / concrete priorities / watch-outs, drawing on multi-channel recency (not call-only). No delivery mechanism — it's a page, not something sent anywhere.
+- **Few-shot self-tuning** (both digests): generation pulls the analyst's last ≤2 rows with `sent_at IS NOT NULL` for that `(user, kind)` as style examples, so the tool learns their actual edited voice instead of needing hand-tuned prompt style rules.
+- **CSAT pulse** (`entity_type='engagement'`): triggers on milestones (kickoff checklist complete, hours burn crosses 50%, stage → Wrap-Up — trigger vocabulary stays app-level config; a `cert_done` trigger is deferred pending the Cert module decision). Delivered as a plain **Gmail draft**, not Slack — deliberately more conservative than the Slack mechanism (no scheduled auto-send/undo-window at all, since asking a client directly for feedback is more sensitive than a call recap; a human must open Gmail and send it themselves). Needs Gmail added as a fifth OAuth provider in `connections` (`gmail.compose` scope only, draft-only, mirroring the reference tool's never-auto-send rule).
+
+```sql
+CREATE TABLE csat_triggers_fired (      -- once-only firing guard, independent of the opt-in question above
+  engagement_id UUID REFERENCES engagements(id),
+  trigger_key TEXT NOT NULL,            -- app config vocab: 'kickoff_complete' | 'hours_burn_50' | 'stage_wrapup' | ...
+  fired_at TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (engagement_id, trigger_key)
+);
+```
+
 ---
 
 ## 4. Explicitly deferred scope (real decisions, not gaps)
@@ -349,14 +370,13 @@ CREATE TABLE llm_content_preferences (
 
 In rough dependency order (most foundational/highest downstream impact first, per the ordering principle used so far):
 
-1. **Digests** (Friday internal, Monday personal, CSAT pulses) — will reuse the `generated_content`/opt-in pattern and the Slack delivery mechanism above. **(Next up.)**
-2. **Ask / agentic assistant** — pattern worth keeping from Hao's tool: propose→confirm, server-side resolvers (never let the model invent an id), structural can't-reach-a-write degradation.
-3. **Client-facing portal** — where the deferred external magic-link auth gets built; visibility already falls out of `engagement_memberships` viewer grants, so this is mostly UI + the auth flow.
-4. **Onboarding flow** for a new analyst/contractor.
-5. **Rules engine** (automated nudges — no_touchpoint, stage_age, hours_burn, etc.). The Harvest "unposted hours pending a missing project" surface (§3) is flagged as this engine's first concrete case once it exists.
-6. **Cert/training module** — Hao's platform-map inventory says "probably leave behind" (Omni-specific content). Needs an explicit yes/no rather than a silent drop.
-7. **Templates/checklist engine** (kickoff checklists, portal visibility templates).
-8. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
+1. **Ask / agentic assistant** — pattern worth keeping from Hao's tool: propose→confirm, server-side resolvers (never let the model invent an id), structural can't-reach-a-write degradation. **(Next up.)**
+2. **Client-facing portal** — where the deferred external magic-link auth gets built; visibility already falls out of `engagement_memberships` viewer grants, so this is mostly UI + the auth flow.
+3. **Onboarding flow** for a new analyst/contractor.
+4. **Rules engine** (automated nudges — no_touchpoint, stage_age, hours_burn, etc.). The Harvest "unposted hours pending a missing project" surface (§3) is flagged as this engine's first concrete case once it exists.
+5. **Cert/training module** — Hao's platform-map inventory says "probably leave behind" (Omni-specific content). Needs an explicit yes/no rather than a silent drop.
+6. **Templates/checklist engine** (kickoff checklists, portal visibility templates).
+7. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
 
 ---
 
@@ -375,3 +395,4 @@ Dated entries for traceability — why something is the way it is, in case it's 
 - **Slack write delivery is always in-app, not conditional on LLM opt-in**: an earlier pass framed the compose→schedule→undo mechanism as "available but optional" for opted-out users, implying they'd just post in Slack directly. Erwin pushed back — staying on-platform avoids the real risk of a CSM opening Slack, getting pulled into unrelated unread threads, and delaying or forgetting the follow-up entirely. The mechanism is now the recommended default for everyone; LLM opt-in only decides whether the compose box starts pre-filled or blank, not whether the in-app path is used at all.
 - **Internal Slack back-channel scoped to Engagement, not Client**: at Erwin's explicit reasoning — an internal discussion channel has no guaranteed continuity across engagement boundaries (a channel from a closed engagement may or may not carry into a future one with the same client), so it follows the same ephemeral-by-default rule as the client-facing channel and Harvest project mapping.
 - **Slack health-signal value questioned, then kept**: Erwin wasn't sure how useful multi-channel Slack-derived health really is, but agreed it's worth keeping since it's computed with zero LLM cost — real value specifically for engagement types with significant between-call Slack activity (retainers, ongoing partnerships), smaller for short call-driven engagements, essentially free either way.
+- **CSAT pulse opt-in stays personal, not org-mandated**: an initial proposal exempted CSAT from the per-user `llm_content_preferences` toggle (via `generated_content_kinds.default_enabled`/`allow_user_override` flags) on the theory that client feedback collection is a company policy decision, not personal productivity. Erwin rejected this — whether a specific client is inclined to answer a survey is an analyst+Ops judgment call, not the platform's to force, and mandating it would generate noise for little value in cases where it's unneeded. CSAT resolves through the exact same opt-in cascade as every other `generated_content` kind; the proposed extra columns were dropped as unneeded complexity.
