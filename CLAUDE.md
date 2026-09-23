@@ -340,6 +340,8 @@ CREATE TABLE llm_content_preferences (
 **Generation discipline** (load-bearing, ported almost verbatim from Hao's most expensive lesson):
 - `GET` routes read the latest cached `generated_content` row for `(entity, kind)` only — never trigger generation, never block on an LLM call. No row → an honest "not generated" state.
 - Generation only happens via an explicit `POST .../generate`, which writes a new row and emits a `content_generated` event.
+- **`POST .../generate` itself checks for an existing non-stale row first** (via `input_hash` or a kind-specific staleness rule, e.g. the pre-call briefing's 6h window) and returns that instead of calling the LLM again — a separate "force regenerate" action is the only path that spends twice. This is also what makes cost sharing across viewers automatic: since most kinds are scoped to `entity_type` in {`meeting`,`engagement`,`client`} rather than `user` (see the entity-type table below), a second person opening the same meeting/engagement gets the first person's cached generation for free, not a second LLM call.
+- **Opt-in gates generating, never reading.** `llm_content_preferences` decides whether *this actor* is allowed to trigger a new generation; it says nothing about whether they can view a row someone else (a teammate, or the rules engine) already produced and that they otherwise have visibility into. An admin/ops user with a kind turned off for themselves still sees an analyst's already-generated draft on an engagement they can see.
 - The generation service function should assert/raise if invoked outside that explicit path — a runtime guard, not just a convention (Hao's team violated the convention-only version of this rule twice in production).
 - Before generating, resolve opt-in: `engagement` row in `llm_content_preferences` for `(engagement_id, kind)` wins if present → else `user` row for `(user_id, kind)` → else **disabled**. No preference rows at all = everything off by default for a new user (the safe default doubles as the spend-control lever).
 - Draft shape (technical/enablement/alignment/general) keyed off `meetings.session_type` stays as **app-level config**, not a DB table — static product vocabulary, no per-tenant customization need (unlike `stage_vocab`/`deliverable_kinds`, which do need DB-level flexibility since different engagement *types* need different values).
@@ -353,6 +355,8 @@ CREATE TABLE llm_content_preferences (
 ### Digests & CSAT pulses
 
 Three more `generated_content_kinds`: `internal_digest`, `weekly_digest`, `csat_pulse` — all three opt-in through the **exact same, uniform** `llm_content_preferences` cascade as drafts/briefings (engagement override → user default → off). An earlier pass considered exempting CSAT from personal opt-out as an org-mandated process; rejected (see §6) — whether a given engagement's client wants to be surveyed is an analyst+Ops judgment call, not a platform-enforced default, and forcing it on would generate noise with little value for clients who aren't inclined to answer.
+
+Worth being explicit about which kinds are shared vs. inherently personal, since it's easy to conflate: `post_call_draft` / `pre_call_briefing` (`entity_type='meeting'`), `client_snapshot` (`entity_type='client'`), and `csat_pulse` (`entity_type='engagement'`) all answer a question that's objectively about the meeting/client/engagement, not about who's asking — one generated row correctly serves an analyst, ops, and admin alike, all reading the same cache. `internal_digest` / `weekly_digest` (`entity_type='user'`) are the one genuine exception: whose portfolio, in whose voice via few-shot tuning, so two different users' digests are legitimately different documents even when both mention the same engagement — not an oversight, just a real difference in what the content *is*.
 
 - **Internal digest** (Friday, `entity_type='user'`): scoped to the analyst's own owned Engagements. Bucketing is **live**, never a stale persisted signal — terminal engagements excluded entirely, Wrap-Up gets its own bucket, everything else buckets by current health. Delivered via the Slack compose→schedule→undo mechanism from the Slack integration section.
 - **Weekly digest** (Monday, `entity_type='user'`): movers / drifting (with why) / concrete priorities / watch-outs, drawing on multi-channel recency (not call-only). No delivery mechanism — it's a page, not something sent anywhere.
@@ -496,6 +500,39 @@ The wizard itself: **profile** (display name, timezone — anchors Harvest day w
 
 **Explicitly out of scope for the wizard**: granting `engagement_memberships` (deciding which clients/engagements a new analyst can see) is business knowledge the system can't infer — an ops-side action taken as part of hiring/assignment, entirely separate from the new analyst's own account setup.
 
+### Rules engine
+
+Almost no new storage needed — it's built almost entirely on top of the event bus and `generated_content`, which is a nice validation of both.
+
+```sql
+CREATE TABLE rules (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL,
+  trigger_type TEXT NOT NULL,       -- 'no_touchpoint' | 'stage_age' | 'action_overdue' | 'hours_burn' | 'cancel_pattern' | 'checklist_overdue' | 'compound' | 'sessions_not_scheduled' | 'on_event'
+  trigger_config JSONB NOT NULL,    -- thresholds, event_type filter, compound sub-rule refs, etc.
+  action_type TEXT NOT NULL,        -- 'raise_alert' | 'draft_nudge'
+  action_config JSONB,
+  engagement_type_key TEXT REFERENCES engagement_types(key),   -- NULL = every type; set = type-specific (generalizes the old qs_invoice_readiness-style gate)
+  enabled BOOLEAN DEFAULT true,
+  created_by_user_id UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE rule_firings (            -- cooldown tracking only — one row per (rule, engagement), not per viewer
+  id UUID PRIMARY KEY, rule_id UUID REFERENCES rules(id), engagement_id UUID REFERENCES engagements(id),
+  fired_at TIMESTAMPTZ DEFAULT now(), cooldown_until TIMESTAMPTZ
+);
+```
+
+**Definitions are a shared, admin-editable playbook; execution and cooldown are per-Engagement, never per-viewer.** A rule evaluates against one engagement's state once per cycle regardless of how many people (analyst, ops, admin) can see that engagement — visibility of the result is computed separately, at read time, via the usual `engagement_memberships`/role-bypass rules. More viewers costs nothing extra on the evaluation side.
+
+- **`stage_age`** needs no new timestamp column — it's "days since the last `stage_changed` event for this engagement," read straight from `events`. The event bus doing real work as a spine, not just an audit trail.
+- **`no_touchpoint` / `hours_burn` / `checklist_overdue`** reuse `engagement_signals`, `time_entries`, and `deliverables.pipeline_status` — no new inputs.
+- **`on_event`** rules don't get polled at all — they register as ordinary event-bus handlers, reacting immediately. Everything else runs off a scheduled job (the existing job queue), checking `rule_firings.cooldown_until` before re-evaluating.
+- **`raise_alert`** is just another `events` row (`event_type='rule_alert_raised'`, payload carries the message) — a dashboard is nothing more than "recent alert events for engagements I can see." No dedicated alert table. A "mark at risk" severity is a tag on this event's payload, **never a write to any health-adjacent column** — health stays fully derived, a rule can flag something loudly but can't hand-author the number itself.
+- **`draft_nudge`** is just another `generated_content_kinds` entry (`entity_type='engagement'`), gated through the same `llm_content_preferences` cascade as everything else — except a rules-engine firing has no acting user to resolve opt-in against. **Resolved against the engagement's owner's preference** — they're the one who'd actually act on or send the nudge, so it's their opt-in that gates whether the system spends on their behalf.
+- **NL→YAML rule authoring** (an admin describes a rule in plain language, gets a schema-constrained draft) is an ungated admin utility, not routed through `llm_content_preferences` — rare, admin-only, not recurring per-engagement generation.
+
 ---
 
 ## 4. Explicitly deferred scope (real decisions, not gaps)
@@ -515,9 +552,8 @@ The wizard itself: **profile** (display name, timezone — anchors Harvest day w
 
 In rough dependency order (most foundational/highest downstream impact first, per the ordering principle used so far):
 
-1. **Rules engine** (automated nudges — no_touchpoint, stage_age, hours_burn, etc.). The Harvest "unposted hours pending a missing project" surface and the portal's "client accepted, awaiting analyst confirmation" surface (§3) are both flagged as this engine's first concrete cases once it exists. **(Next up.)**
-2. **Templates/checklist engine** (kickoff checklists, portal visibility templates).
-3. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
+1. **Templates/checklist engine** (kickoff checklists, portal visibility templates). **(Next up.)**
+2. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
 
 ---
 
@@ -543,3 +579,4 @@ Dated entries for traceability — why something is the way it is, in case it's 
 - **Portal scope expanded well beyond read-only status once discussed through**: an initial pass scoped the portal to Deliverables-only, no comments, no client-side write capability at all. Erwin pushed for two-way async comms (a client-facing comment thread) and a UAT-style review/flag capability (Accepted/Blocked/Rejected) as the real "killer feature," not an afterthought — the portal's value is visibility *and* collaboration. Comments live in a structurally separate table from internal activity (never a visibility flag on one shared table), and review verdicts never auto-mutate `pipeline_status` — same "explicit human decision" principle already applied to health/stage.
 - **`deliverables.assignee_user_id` split into two columns**: `internal_assignee_user_id` (who's doing the work) and `client_owner_user_id` (who owns client-side validation/sign-off) are independent and routinely both populated for the same deliverable — one column couldn't represent a dev/analyst and a client QA owner simultaneously. This also became the key for per-client-user portal visibility scoping (`engagement_memberships.viewer_scope`): a project lead sees everything in an engagement, while a client-side QA/analyst user sees only deliverables where they're the `client_owner_user_id` (plus ancestors, for context) — the client's own org structure, not something Shearwater imposes.
 - **Onboarding has no hard finish gate**: the reference tool required Fathom + LLM connected to finish, because its data model *was* the sync pipeline. Ours isn't — manual creation works standalone, and there's no per-user LLM credential to require anymore anyway (org-level key). Confirmed explicitly by Erwin rather than assumed: every integration is a recommended, dismissible nudge, never a blocker.
+- **`mark_at_risk` redesigned as an alert severity tag, not a health override**: the reference tool's rules engine could write directly to a manual health-override column; we don't have one, on purpose (health is fully derived). Confirmed with Erwin via a concrete walkthrough (an Acme Corp engagement seen by an Admin, an Ops user, and one assigned Analyst) that also surfaced two things worth stating explicitly rather than leaving implicit: (1) rules evaluate and cooldown per-Engagement, never per-viewer — visibility of the result is a separate, read-time concern; (2) most `generated_content` kinds are shared across every viewer who can see the entity by construction (`entity_type` in meeting/engagement/client), so a cache-check-before-generate rule in `POST .../generate` is what actually prevents three viewers from tripling LLM spend on the same meeting — only `internal_digest`/`weekly_digest` are genuinely personal and can't be shared. The walkthrough also exposed a real gap: a rules-engine-triggered `draft_nudge` has no acting user to resolve opt-in against, so it resolves against the engagement owner's preference instead.
