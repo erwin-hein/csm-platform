@@ -157,7 +157,8 @@ CREATE TABLE deliverables (
   pipeline_status TEXT DEFAULT 'not_started',   -- not_started|in_progress|internal_validation|external_validation|done
   blocked BOOLEAN DEFAULT false, blocked_reason TEXT,
   not_applicable BOOLEAN DEFAULT false,
-  assignee_user_id UUID REFERENCES users(id),
+  internal_assignee_user_id UUID REFERENCES users(id),   -- who's doing the work (internal, typically)
+  client_owner_user_id UUID REFERENCES users(id),        -- who owns client-side QA/validation/sign-off (typically client_external) — independent of the above, both nullable
   priority TEXT, target_date DATE,
   hours_estimated NUMERIC,
   created_at TIMESTAMPTZ DEFAULT now(),
@@ -174,6 +175,21 @@ CREATE TABLE deliverable_blockers (
 CREATE TABLE deliverable_activity (
   id UUID PRIMARY KEY, deliverable_id UUID REFERENCES deliverables(id),
   actor_user_id UUID REFERENCES users(id), kind TEXT, body TEXT, created_at TIMESTAMPTZ DEFAULT now()
+  -- internal-only, never client-visible — see the Portal section for the deliberately separate client-facing channel
+);
+
+-- Client-facing comms and review, see Portal section for the full design:
+CREATE TABLE deliverable_comments (
+  id UUID PRIMARY KEY, deliverable_id UUID REFERENCES deliverables(id),
+  author_user_id UUID REFERENCES users(id),   -- internal or client_external — bidirectional by design
+  body TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE deliverable_client_reviews (
+  id UUID PRIMARY KEY, deliverable_id UUID REFERENCES deliverables(id),
+  reviewer_user_id UUID REFERENCES users(id),   -- a client_external user
+  verdict TEXT NOT NULL,   -- 'accepted' | 'blocked' | 'rejected' — current verdict = latest row, derived, never overwritten in place
+  created_at TIMESTAMPTZ DEFAULT now()
 );
 ```
 
@@ -403,6 +419,68 @@ Two sources, two ingestion mechanisms, one table:
 
 **A third source (`cert`) was deliberately never added** — the Cert/training module is out of MVP scope entirely (§4), not merely deferred pending a decision.
 
+### Client-facing portal
+
+Builds directly on the deferred external auth (§2 row 16) and `engagement_memberships` viewer grants. Turned out to be more than a read-only status page once discussed through — the real value is visibility **and** async collaboration (comments + client review verdicts), not just a dashboard.
+
+**Authentication — invite-only, not self-serve.** Unlike internal Google OAuth (open to anyone with a valid `@shearwaterdata.com` address), a `client_external` account must be created first by an analyst/ops action (inviting a specific `client_contacts` email to view a specific engagement) — only then can that email request a login link.
+
+```sql
+CREATE TABLE magic_link_tokens (
+  token TEXT PRIMARY KEY,          -- random, high-entropy
+  user_id UUID REFERENCES users(id),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,             -- single-use: NULL until consumed
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Flow: request → the app responds identically ("if that email has access, a link has been sent") whether or not the email actually has an account, to avoid a user-enumeration side channel → emailed link → click → validate unused+unexpired → session cookie, same session mechanism internal users get. Revocation is just deleting the `engagement_memberships` row; the `client_external` user account persists (same as an internal analyst losing ownership doesn't delete their account). Invite action is gated the same way other engagement-scoped actions are: owner/collaborator on that engagement, or ops/admin.
+
+**What's visible — Deliverables only, deliberately narrow.** Engagement name/stage, and its deliverables (name, kind, `pipeline_status`, blocked/blocked_reason, target_date, rolled-up progress). Not shown: `deliverable_activity` (internal-only, see below), meetings, action items, health, hours/burn, or the contact roster — health specifically because it's an internal risk signal, not something to editorialize to a client about their own relationship. No granular per-field visibility-toggle system (the reference tool's `client_portal_visibility`) — that's speculative flexibility for later, once there's real demand for exposing something beyond this.
+
+**Two comms channels, structurally separate, not one table with a flag.** `deliverable_activity` stays fully internal (status-change log + internal commentary) — a client never sees it. A genuinely new, bidirectional channel exists for client-facing comms:
+
+```sql
+CREATE TABLE deliverable_comments (
+  id UUID PRIMARY KEY, deliverable_id UUID REFERENCES deliverables(id),
+  author_user_id UUID REFERENCES users(id),   -- internal or client_external
+  body TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Two tables rather than a visibility flag on one is a deliberate choice: a flag is one mis-set value away from leaking internal chatter to a client; a separate table makes that structurally impossible, same principle as `doc_chunks.url` only ever being populated for `web` rows. Anyone who can see a deliverable can read and post into its comment thread — commenting is low-stakes enough not to need tighter gating than visibility itself.
+
+**Client review verdicts — a UAT-style signal, layered on top of the pipeline, never auto-mutating it.**
+
+```sql
+CREATE TABLE deliverable_client_reviews (
+  id UUID PRIMARY KEY, deliverable_id UUID REFERENCES deliverables(id),
+  reviewer_user_id UUID REFERENCES users(id),   -- a client_external user
+  verdict TEXT NOT NULL,   -- 'accepted' | 'blocked' | 'rejected'
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Kept as a history (UAT is realistically iterative — reject, fix, resubmit, re-review) rather than one overwritable column; current verdict = the latest row, derived at read time. **A client's "accepted" verdict never auto-transitions `pipeline_status` to done** — it surfaces as an actionable signal the assigned analyst still has to act on, same "completion is always an explicit human decision" principle already applied to stage/health elsewhere. Flagged as a natural first case for the still-undesigned Rules engine (notify the assignee the moment a review lands), alongside the Harvest blocked-hours case already noted there.
+
+**Per-client-user deliverable scoping — the client's own org structure, not ours.** A project lead should see everything; their own QA/analyst team should see only what they specifically own. This layers onto the existing engagement-level grant rather than needing a separate access system:
+
+```sql
+ALTER TABLE engagement_memberships ADD COLUMN viewer_scope TEXT DEFAULT 'full';   -- 'full' | 'assigned_only'
+```
+
+Visibility for an `assigned_only` viewer:
+```
+visible(deliverable, viewer) = viewer_scope = 'full'
+  OR deliverable.client_owner_user_id = viewer.id
+  OR deliverable has a descendant where client_owner_user_id = viewer.id   -- see the parent for context; tree is ≤2 levels, so this is a single parent-check, not real recursion
+```
+
+The same predicate gates `deliverable_comments` and `deliverable_client_reviews`, not just the deliverable list. It also gates **who can submit a review verdict**: a `full`-scope project lead can review/flag anything they can see (oversight authority); an `assigned_only` client user can only submit a verdict on deliverables where they're the designated `client_owner_user_id`.
+
+This is what drove splitting `deliverables.assignee_user_id` into two independent columns (see §3 Deliverables) — one internal-facing (who's doing the work), one client-facing (who owns validation/sign-off) — since the same deliverable routinely has both, from two different organizations, and a single column couldn't represent that.
+
 ---
 
 ## 4. Explicitly deferred scope (real decisions, not gaps)
@@ -412,8 +490,8 @@ Two sources, two ingestion mechanisms, one table:
 | Auto-discovery of new Clients/Engagements from sync (confirm/exclude queue) | Manual creation + the unassigned-meetings backfill screen cover v1 needs without the added complexity of a confirm/candidate lifecycle. | Friction of manual entry is actually felt at scale. |
 | BigQuery / Omni analytics integration | Wrong tool for the OLTP write path; a downstream sink fed from Postgres is the right shape, not needed for v1. | Cross-org/leadership reporting needs grow past what the app's own views cover. |
 | Per-user/per-workspace Claude API keys | Ops/Finance haven't decided how they want AI spend billed; a single org key + per-user `llm_usage` log keeps the decision reversible without any rework. | Finance wants true chargeback, or per-team budget ceilings. |
-| External (`client_external`) authentication / client-facing portal | Not the MVP's primary use case; internal analysts are the first test users. | Explicitly picked up as its own Open item (§5) — this is where the magic-link flow gets built. |
 | Managed auth-as-a-service (e.g. WorkOS) | Hand-rolled Google OAuth is faster to ship for the internal-only MVP. | If/when the external-auth build turns out heavier than expected, worth revisiting. |
+| Granular per-field portal visibility toggles (à la the reference tool's `client_portal_visibility`) | Portal ships Deliverables-only for now; that's speculative flexibility with no demand behind it yet. | A specific engagement needs to expose something beyond deliverables. |
 | Cert/training module | Explicitly cut from MVP scope by Erwin — not merely low-priority, a decided no. | Not currently expected to revisit; would need a fresh ask if training/certification becomes a real product need. |
 
 ---
@@ -422,11 +500,10 @@ Two sources, two ingestion mechanisms, one table:
 
 In rough dependency order (most foundational/highest downstream impact first, per the ordering principle used so far):
 
-1. **Client-facing portal** — where the deferred external magic-link auth gets built; visibility already falls out of `engagement_memberships` viewer grants, so this is mostly UI + the auth flow. **(Next up.)**
-2. **Onboarding flow** for a new analyst/contractor.
-3. **Rules engine** (automated nudges — no_touchpoint, stage_age, hours_burn, etc.). The Harvest "unposted hours pending a missing project" surface (§3) is flagged as this engine's first concrete case once it exists.
-4. **Templates/checklist engine** (kickoff checklists, portal visibility templates).
-5. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
+1. **Onboarding flow** for a new analyst/contractor. **(Next up.)**
+2. **Rules engine** (automated nudges — no_touchpoint, stage_age, hours_burn, etc.). The Harvest "unposted hours pending a missing project" surface and the portal's "client accepted, awaiting analyst confirmation" surface (§3) are both flagged as this engine's first concrete cases once it exists.
+3. **Templates/checklist engine** (kickoff checklists, portal visibility templates).
+4. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
 
 ---
 
@@ -449,3 +526,5 @@ Dated entries for traceability — why something is the way it is, in case it's 
 - **Doc search corpus decided source-by-source, not as one blanket call**: the reference tool blended three sources (public Omni vendor docs, an internal playbook, cert/training material) into one index. Broken apart on inspection: `web` (Omni docs) kept as-is since Shearwater is still Omni-focused; `internal` (playbook) gets the structure built now even without content, since the actual pages exist in the company's Notion workspace and just need pointing at; `cert` dropped entirely as a direct consequence of cutting the Cert module from MVP scope (a decided no, not a deferred maybe).
 - **Cert/training module cut from MVP entirely**: previously an open "needs an explicit yes/no" item; Erwin decided no. Moved from Open (§5) to Deferred (§4) as a real decision, not left ambiguous.
 - **Notion access is org-level, not per-user**: unlike every other integration (Calendar/Fathom/Harvest/Slack/Gmail, all per-user OAuth), the internal playbook lives in one shared company Notion workspace — a single admin-configured token is the right shape, mirroring the single-org-key reasoning already used for Claude billing.
+- **Portal scope expanded well beyond read-only status once discussed through**: an initial pass scoped the portal to Deliverables-only, no comments, no client-side write capability at all. Erwin pushed for two-way async comms (a client-facing comment thread) and a UAT-style review/flag capability (Accepted/Blocked/Rejected) as the real "killer feature," not an afterthought — the portal's value is visibility *and* collaboration. Comments live in a structurally separate table from internal activity (never a visibility flag on one shared table), and review verdicts never auto-mutate `pipeline_status` — same "explicit human decision" principle already applied to health/stage.
+- **`deliverables.assignee_user_id` split into two columns**: `internal_assignee_user_id` (who's doing the work) and `client_owner_user_id` (who owns client-side validation/sign-off) are independent and routinely both populated for the same deliverable — one column couldn't represent a dev/analyst and a client QA owner simultaneously. This also became the key for per-client-user portal visibility scoping (`engagement_memberships.viewer_scope`): a project lead sees everything in an engagement, while a client-side QA/analyst user sees only deliverables where they're the `client_owner_user_id` (plus ancestors, for context) — the client's own org structure, not something Shearwater imposes.
