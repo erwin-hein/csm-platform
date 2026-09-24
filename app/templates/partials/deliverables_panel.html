@@ -1,4 +1,5 @@
 {% from "macros.html" import status_pill, dep_signal, progress_bar, progress_text %}
+{% from "portal/macros.html" import verdict_chip %}
 
 {% macro status_control(d) -%}
 {% if can_edit %}
@@ -19,13 +20,14 @@
       <a class="dv-name" href="/deliverables/{{ d.id }}">{{ d.name }}</a>
       {% if d.not_applicable %}<span class="status-badge">n/a</span>{% endif %}
       {{ dep_signal(node.signal) }}
+      {% if node.verdict %}{{ verdict_chip(node.verdict, 'Client: ') }}{% endif %}
     </div>
     {% if child_kind %}<div class="dv-roll">{{ progress_bar(node.progress) }}{{ progress_text(node.progress) }}</div>{% endif %}
     <div class="dv-status">{{ status_control(d) }}</div>
     {% if child_kind and can_edit %}<a class="btn small" href="/engagements/{{ engagement.id }}/deliverables/new?kind={{ child_kind.kind }}&parent_id={{ d.id }}" title="Add {{ child_kind.display_name | lower }}">+ {{ child_kind.display_name }}</a>{% endif %}
     <button class="chat-btn" type="button" title="Activity & comments"
             hx-get="/deliverables/{{ d.id }}/chat" hx-target="#chat-dialog-body" hx-swap="innerHTML"
-            onclick="openChat()">💬{% if node.note_count %}<span class="chat-count">{{ node.note_count }}</span>{% endif %}</button>
+            onclick="openChat()">💬{% if node.note_count %}<span class="chat-count">{{ node.note_count }}</span>{% endif %}{% if node.client_comment_count %}<span class="chat-count client" title="Client thread">{{ node.client_comment_count }}</span>{% endif %}</button>
   </div>
   <div class="dv-body">
     <div class="dv-meta">
@@ -35,6 +37,7 @@
       {% if d.hours_estimated is not none %}<span>{{ d.hours_estimated | float | round(1) }}h est.</span>{% endif %}
       {% if node.blockers %}<span>Waits on: {% for b in node.blockers %}<a href="/deliverables/{{ b.id }}">{{ b.name }}</a>{% if b.pipeline_status == 'done' or b.not_applicable %} ✓{% endif %}{{ ', ' if not loop.last }}{% endfor %}</span>{% endif %}
       {% if d.blocked %}<span class="dv-reason">Blocked: {{ d.blocked_reason }}</span>{% endif %}
+      {% if d.client_owner %}<span>Client owner: {{ d.client_owner.label }}</span>{% endif %}
     </div>
     {% if child_kind %}
     <div class="dv-children">
@@ -55,7 +58,8 @@
 {% for section in tree.sections %}
 <div class="card flush">
   <div class="section-head">
-    <div><h2 style="margin:0">{{ section.kind.display_name }}s{% if section.child_kind %} → {{ section.child_kind.display_name }}s{% endif %}</h2>
+    <div><h2 style="margin:0">{{ section.kind.display_name }}s{% if section.child_kind %} → {{ section.child_kind.display_name }}s{% endif %}
+      {% if section.kind.client_visible %}<span class="client-tag" title="Clients with portal access can see these">Client-visible</span>{% else %}{% if has_client_view %}<span class="role-chip small">Internal only</span>{% endif %}{% endif %}</h2>
       <span class="small muted">{% if section.child_kind %}Two-level tree; progress rolls up from {{ section.child_kind.display_name | lower }}s.{% else %}Flat list, with no parent/child structure for this kind.{% endif %}</span></div>
     <div class="row">
       <div style="width:140px">{{ progress_bar(section.progress) }}{{ progress_text(section.progress) }}</div>

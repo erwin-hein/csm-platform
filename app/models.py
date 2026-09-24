@@ -34,6 +34,9 @@ ENGAGEMENT_STATUSES = ["active", "paused", "complete", "cancelled"]
 USER_TYPES = ["internal", "client_external"]
 INTERNAL_ROLES = ["analyst", "contractor", "ops", "admin"]
 MEMBERSHIP_ROLES = ["owner", "collaborator", "viewer"]
+VIEWER_SCOPES = ["full", "assigned_only"]
+REVIEW_VERDICTS = ["accepted", "blocked", "rejected"]
+UAT_STATUS = "external_validation"  # client review verdicts can only be given while a deliverable is in UAT
 
 
 class Base(DeclarativeBase):
@@ -93,6 +96,9 @@ class EngagementMembership(Base):
     )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True)
     role: Mapped[str] = mapped_column(Enum(*MEMBERSHIP_ROLES, name="membership_role"), nullable=False)
+    # Only meaningful for client_external viewers (CLAUDE.md §3 Portal): 'full' = project lead,
+    # 'assigned_only' = sees only deliverables they're client owner of (plus parents, for context).
+    viewer_scope: Mapped[str] = mapped_column(Text, server_default="full", default="full")
 
     user: Mapped[User] = relationship(lazy="joined")
     engagement: Mapped["Engagement"] = relationship(back_populates="memberships")
@@ -232,6 +238,9 @@ class DeliverableKind(Base):
     kind: Mapped[str] = mapped_column(Text, primary_key=True)
     display_name: Mapped[str | None] = mapped_column(Text)
     parent_kind: Mapped[str | None] = mapped_column(Text)
+    # Whether client_external users can ever see deliverables of this kind. A type with no
+    # client-visible kinds has no client view at all.
+    client_visible: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
 
 
 class Deliverable(Base):
@@ -277,6 +286,7 @@ class Deliverable(Base):
     parent: Mapped["Deliverable | None"] = relationship(remote_side="Deliverable.id", back_populates="children")
     children: Mapped[list["Deliverable"]] = relationship(back_populates="parent", order_by="Deliverable.created_at")
     internal_assignee: Mapped[User | None] = relationship(foreign_keys=[internal_assignee_user_id])
+    client_owner: Mapped[User | None] = relationship(foreign_keys=[client_owner_user_id])
     activity: Mapped[list["DeliverableActivity"]] = relationship(
         order_by="DeliverableActivity.created_at.desc()"
     )
@@ -301,6 +311,38 @@ class DeliverableActivity(Base):
     created_at: Mapped[datetime] = _created_at()
 
     actor: Mapped[User | None] = relationship()
+
+
+class DeliverableComment(Base):
+    """The client-facing thread. Structurally separate from deliverable_activity (internal
+    notes), so internal chatter can't leak to a client through a mis-set flag."""
+
+    __tablename__ = "deliverable_comments"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    deliverable_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("deliverables.id"))
+    author_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
+
+    author: Mapped[User] = relationship()
+
+
+class DeliverableClientReview(Base):
+    """Append-only verdict history; the current verdict is the latest row."""
+
+    __tablename__ = "deliverable_client_reviews"
+    __table_args__ = (
+        CheckConstraint("verdict IN ('accepted','blocked','rejected')", name="ck_deliverable_client_reviews_verdict"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    deliverable_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("deliverables.id"))
+    reviewer_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    verdict: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
+
+    reviewer: Mapped[User] = relationship()
 
 
 # ---------------------------------------------------------------- events — the spine

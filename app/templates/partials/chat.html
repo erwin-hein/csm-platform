@@ -1,4 +1,7 @@
-{# Deliverable activity + internal comments, shown in the engagement page's pop-up. #}
+{# Deliverable pop-up: two structurally separate channels. Internal notes live in
+   deliverable_activity and never reach a client; the client thread (deliverable_comments)
+   is exactly what the client sees in the portal. #}
+{% from "portal/macros.html" import verdict_chip %}
 <div class="chat-head">
   <div>
     <div class="small muted">{{ d.kind | capitalize }} · {{ PIPELINE_LABELS[d.pipeline_status] }}</div>
@@ -9,7 +12,31 @@
     <form method="dialog" class="inline"><button class="btn small" type="submit" aria-label="Close">✕</button></form>
   </div>
 </div>
-<div class="chat-scope small">Internal only · never visible to clients</div>
+{% if client_ok %}
+<div class="chat-tabs">
+  <button type="button" class="internal {{ 'on' if channel == 'internal' }}" hx-get="/deliverables/{{ d.id }}/chat?channel=internal" hx-target="#chat-dialog-body">Internal notes</button>
+  <button type="button" class="client {{ 'on' if channel == 'client' }}" hx-get="/deliverables/{{ d.id }}/chat?channel=client" hx-target="#chat-dialog-body">Client thread</button>
+</div>
+{% endif %}
+{% if channel == 'client' %}
+<div class="chat-scope client small" style="margin-top:8px">Visible to the client · everything here appears in their portal</div>
+<ol class="chat-log" id="chat-log">
+  {% for r in reviews | reverse %}<li class="chat-event">{{ verdict_chip(r) }} verdict from {{ r.reviewer.label }} <span class="muted">· {{ r.created_at.strftime('%b %d, %H:%M') }}</span></li>{% endfor %}
+  {% for c in comments %}
+  <li class="chat-msg {{ 'mine' if c.author_user_id == user.id }}">
+    <div class="chat-meta"><b>{{ c.author.label }}</b>{% if c.author.user_type == 'client_external' %} · client{% endif %} · {{ c.created_at.strftime('%b %d, %H:%M') }}</div>
+    <div class="chat-bubble">{{ c.body }}</div>
+  </li>
+  {% else %}<li class="chat-event muted">No client comments yet.</li>{% endfor %}
+</ol>
+<form class="chat-form client" hx-post="/deliverables/{{ d.id }}/client-comments" hx-target="#chat-dialog-body" hx-swap="innerHTML">
+  <textarea name="body" placeholder="Reply to the client…" required
+            onkeydown="if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){this.form.requestSubmit()}"></textarea>
+  <div class="spread"><span class="small muted">The client will see this</span><button class="btn primary small" type="submit">Send to client</button></div>
+</form>
+<script>document.getElementById('chat-dialog').classList.add('client-mode');</script>
+{% else %}
+<div class="chat-scope small" style="margin-top:8px">Internal only · never visible to clients</div>
 <ol class="chat-log" id="chat-log">
   {% for a in activity %}
     {% if a.kind == 'note' %}
@@ -27,4 +54,6 @@
             onkeydown="if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){this.form.requestSubmit()}"></textarea>
   <div class="spread"><span class="small muted">⌘/Ctrl + Enter to send</span><button class="btn primary small" type="submit">Comment</button></div>
 </form>
+<script>document.getElementById('chat-dialog').classList.remove('client-mode');</script>
+{% endif %}
 <script>(function(){const l=document.getElementById('chat-log'); if(l) l.scrollTop=l.scrollHeight;})();</script>

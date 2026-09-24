@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 from app.models import Client, Deliverable, User
+from app.services import client_portal as P
 from app.services import clients as C
 from app.services import deliverables as D
 from app.services import engagements as E
@@ -199,6 +200,26 @@ def seed(db: Session) -> None:
     D.add_note(db, tomas, bfx["Revenue-cycle measures"].id,
                body="Net-collection-rate differs from Tableau by 0.4% — tracing to a date-grain mismatch.")
 
+    # ---- Client portal on Bluefin: a project lead (full scope) and a QA analyst (assigned only).
+    contacts = {c.name: c for c in bluefin.contacts}
+    lead_m = P.invite_client_contact(db, admin, bf.id, contact_id=contacts["Dr. Hannah Cho"].id, viewer_scope="full")
+    qa_m = P.invite_client_contact(db, admin, bf.id, contact_id=contacts["Marcus Reid"].id,
+                                   viewer_scope="assigned_only")
+    hannah, marcus = lead_m.user, qa_m.user
+    _set(db, admin, bfx["Executive Census"], client_owner_user_id=hannah.id)
+    for tile in ("Daily census KPI", "Bed occupancy trend", "Denial rate by payer"):
+        _set(db, admin, bfx[tile], client_owner_user_id=marcus.id)
+    kpi = bfx["Daily census KPI"]  # already in UAT (external_validation)
+    P.submit_review(db, marcus, kpi.id, verdict="rejected",
+                    comment="Census count is one day behind our source report for the last three days.")
+    D.add_note(db, tomas, kpi.id, body="Root cause: the extract cuts off at UTC midnight, not local. Fixed in the model.")
+    P.add_client_comment(db, tomas, kpi.id,
+                         body="Thanks Marcus, found it: a timezone cut-off. Fixed and re-shared; ready for another look.")
+    P.add_client_comment(db, hannah, bfx["Executive Census"].id,
+                         body="Could the census tiles get a filter by nursing unit? Our charge nurses asked for it.")
+    P.add_client_comment(db, tomas, bfx["Executive Census"].id,
+                         body="Yes, adding a unit filter across the dashboard this week.")
+
     cb_mig = E.create_engagement(db, admin, client_id=cobalt.id, type_key="migration",
                                  name="Cobalt Looker → Omni Migration")
     for stage in ("access_setup", "semantic_parity", "dashboard_build"):
@@ -240,7 +261,7 @@ def reset(db: Session) -> None:
     # disables it for this transaction.
     db.execute(text("ALTER TABLE events DISABLE TRIGGER USER"))
     db.execute(text(
-        "TRUNCATE events, deliverable_activity, deliverable_blockers, deliverables, engagement_memberships, "
+        "TRUNCATE events, deliverable_client_reviews, deliverable_comments, deliverable_activity, deliverable_blockers, deliverables, engagement_memberships, "
         "engagements, client_contacts, client_aliases, clients, users"))
     db.execute(text("ALTER TABLE events ENABLE TRIGGER USER"))
 

@@ -3,10 +3,13 @@ from pathlib import Path
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
+from app.services.client_portal import CLIENT_STATUS_LABELS, VERDICT_LABELS
 from app.services.deliverables import PIPELINE_LABELS
 
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
 templates.env.globals["PIPELINE_LABELS"] = PIPELINE_LABELS
+templates.env.globals["status_labels"] = CLIENT_STATUS_LABELS   # client-facing wording
+templates.env.globals["verdict_labels"] = VERDICT_LABELS
 
 
 def is_htmx(request: Request) -> bool:

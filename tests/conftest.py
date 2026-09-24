@@ -92,3 +92,25 @@ def world(db):
     return type("World", (), dict(admin=admin, alice=alice, bob=bob, ops=ops, client=client,
                                   other_client=other_client, alice_eng=alice_eng, bob_eng=bob_eng,
                                   globex_eng=globex_eng))
+
+
+@pytest.fixture
+def portal(db, world):
+    """Acme Migration with a client lead (full scope) and a client QA (assigned only),
+    plus a dashboard tree and an internal-only phase."""
+    from app.services import client_portal, deliverables
+
+    a, eid = world.admin, world.alice_eng.id
+    lead_c = clients.add_contact(db, a, world.client.id, name="Lena Lead", email="lena@acme.com")
+    qa_c = clients.add_contact(db, a, world.client.id, name="Quinn QA", email="quinn@acme.com")
+    lead = client_portal.invite_client_contact(db, a, eid, contact_id=lead_c.id, viewer_scope="full").user
+    qa = client_portal.invite_client_contact(db, a, eid, contact_id=qa_c.id, viewer_scope="assigned_only").user
+    phase = deliverables.create_deliverable(db, a, eid, kind="phase", name="Internal phase")
+    dash = deliverables.create_deliverable(db, a, eid, kind="dashboard", name="Sales dashboard")
+    qa_tile = deliverables.create_deliverable(db, a, eid, kind="tile", name="QA tile", parent_id=dash.id)
+    other_tile = deliverables.create_deliverable(db, a, eid, kind="tile", name="Lead-only tile", parent_id=dash.id)
+    other_dash = deliverables.create_deliverable(db, a, eid, kind="dashboard", name="Other dashboard")
+    deliverables.update_deliverable(db, a, qa_tile.id, client_owner_user_id=qa.id)
+    db.flush()
+    return type("Portal", (), dict(lead=lead, qa=qa, phase=phase, dash=dash, qa_tile=qa_tile,
+                                   other_tile=other_tile, other_dash=other_dash, eng=world.alice_eng))

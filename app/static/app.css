@@ -277,3 +277,44 @@ button.step:hover:not(.current) { border-color: var(--accent); }
 .alloc-form { margin-top: 10px; gap: 6px; }
 .alloc-form select[name=engagement_id] { flex: 1; min-width: 0; }
 @media (max-width: 700px) { .person-stats { grid-template-columns: repeat(3, 1fr); } }
+
+/* ---- client portal + client-facing bits shown internally */
+.portal-bar { background: #0f3d4a; }
+.portal-card { color: var(--text); }
+.portal-card:hover { text-decoration: none; border-color: var(--accent); }
+.to-review { color: #8a5a00; }
+.p-list { padding: 4px 0; }
+.p-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.p-item:last-child { border-bottom: none; }
+.p-item.p-child { padding-left: 38px; background: #fcfcfd; }
+.p-item.p-review { box-shadow: inset 3px 0 0 #cf8a14; }
+.p-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.p-name { font-weight: 500; color: var(--text); }
+.p-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.p-reason { font-size: 12px; color: var(--d-blocked); padding: 0 16px 8px; margin-top: -6px; }
+.p-reason.p-child { padding-left: 38px; }
+.owned-tag { font-size: 11px; font-weight: 600; color: #0f6b5e; background: #dff3ef; padding: 1px 7px; border-radius: 4px; }
+.verdict { font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.verdict.v-accepted { background: #e3f5ea; color: #1e6e40; }
+.verdict.v-blocked { background: #fcebc8; color: #8a5a00; }
+.verdict.v-rejected { background: #fdecec; color: #8f2626; }
+.verdict-buttons { display: flex; gap: 6px; margin-top: 8px; }
+.verdict-buttons .btn { flex: 1; justify-content: center; }
+.btn.v-accepted:hover { background: #e3f5ea; } .btn.v-blocked:hover { background: #fcebc8; } .btn.v-rejected:hover { background: #fdecec; }
+.portal-thread { padding: 0; max-height: none; }
+.client-tag { font-size: 11px; font-weight: 600; color: #8a5a00; background: #fff4df; border: 1px solid #f1d9a8; padding: 0 6px; border-radius: 4px; }
+.view-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+.view-tabs a { padding: 6px 14px; border-radius: 6px 6px 0 0; border: 1px solid var(--border); border-bottom: none; background: var(--surface-2); color: var(--muted); }
+.view-tabs a.on { background: var(--surface); color: var(--text); font-weight: 600; }
+.view-tabs a.on.client { box-shadow: inset 0 3px 0 #cf8a14; }
+.view-tabs a.on.internal { box-shadow: inset 0 3px 0 var(--accent); }
+.chat-tabs { display: flex; gap: 4px; margin: 0 18px; }
+.chat-tabs button { flex: 1; border: 1px solid var(--border); background: var(--surface-2); padding: 6px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12.5px; color: var(--muted); }
+.chat-tabs button.on.internal { background: #eef2fb; color: #2d3f66; border-color: #c9d6f2; font-weight: 600; }
+.chat-tabs button.on.client { background: #fff4df; color: #7a4e00; border-color: #f1d9a8; font-weight: 600; }
+.chat-scope.client { background: #fff4df; color: #7a4e00; }
+.chat-dialog.client-mode .chat-form { background: #fffaf0; }
+.chat-count.client { color: #a0620a; margin-left: 2px; }
+.chat-count.client::before { content: "·"; margin-right: 3px; color: var(--muted); }
+.client-preview-note { margin-bottom: 12px; background: #fffaf0; border-color: #f1d9a8; }
+.client-card { border-color: #f1d9a8; background: #fffdf8; }

@@ -11,10 +11,10 @@ from sqlalchemy import select
 import app.services
 from app.events import MUTATIONS, mutation
 from app.models import Event
-from app.services import clients, deliverables, engagements, memberships, users
+from app.services import client_portal, clients, deliverables, engagements, memberships, users
 
 READ_PREFIXES = ("get_", "list_", "derive_", "kinds_for_", "blocker_", "blocking_", "engagement_", "parent_",
-                 "is_allowed_")
+                 "is_allowed_", "can_")
 # Not a mutation itself: delegates to create_internal_user (which is) only on first login.
 EXEMPT = {"app.services.users.login_or_bootstrap"}
 
@@ -72,6 +72,15 @@ def test_each_mutation_writes_its_event_row(db, world):
     run(deliverables.add_note, a, p1.id, body="note")
     run(deliverables.add_blocker, a, p2.id, blocker_id=p1.id)
     run(deliverables.remove_blocker, a, p2.id, blocker_id=p1.id)
+
+    contact = clients.add_contact(db, a, c.id, name="Carla Client", email="carla@initech.com")
+    m = run(client_portal.invite_client_contact, a, e.id, contact_id=contact.id, viewer_scope="full")
+    run(client_portal.set_client_scope, a, e.id, user_id=m.user_id, viewer_scope="assigned_only")
+    dash = deliverables.create_deliverable(db, a, e.id, kind="dashboard", name="Dash")
+    deliverables.update_deliverable(db, a, dash.id, client_owner_user_id=m.user_id, pipeline_status="external_validation")
+    run(client_portal.add_client_comment, a, dash.id, body="Ready for review")
+    run(client_portal.submit_review, m.user, dash.id, verdict="accepted")
+    run(client_portal.revoke_client_access, a, e.id, user_id=m.user_id)
 
     assert exercised == set(MUTATIONS), f"Add a case for: {set(MUTATIONS) - exercised}"
 

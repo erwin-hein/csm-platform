@@ -11,7 +11,12 @@
     <label class="field"><span>Demo passcode</span><input type="password" name="passcode" required></label>
     <label class="field"><span>Sign in as</span>
       <select name="email" id="demo-email">
+        <optgroup label="Shearwater (internal)">
         {% for u in users %}<option value="{{ u.email }}">{{ u.label }} — {{ u.role }} ({{ u.email }})</option>{% endfor %}
+        </optgroup>
+        {% if client_users %}<optgroup label="Client users (portal)">
+        {% for u in client_users %}<option value="{{ u.email }}">{{ u.label }} — client ({{ u.email }})</option>{% endfor %}
+        </optgroup>{% endif %}
       </select>
     </label>
     <button class="btn primary" type="submit">Sign in</button>

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.access import (
     can_edit_engagement,
+    client_visible_kinds,
     get_editable_engagement,
     get_visible_client,
     get_visible_deliverable,
@@ -24,6 +25,7 @@ from app.models import (
     ENGAGEMENT_STATUSES,
     MEMBERSHIP_ROLES,
     PIPELINE_STATUSES,
+    VIEWER_SCOPES,
     Deliverable,
     Engagement,
     EngagementMembership,
@@ -31,6 +33,7 @@ from app.models import (
     User,
 )
 from app.services import capacity as capacity_service
+from app.services import client_portal
 from app.services import clients as client_service
 from app.services import deliverables as deliverable_service
 from app.services import engagements as engagement_service
@@ -190,6 +193,7 @@ def engagement_create(client_id: str = Form(""), type_key: str = Form(""), name:
 def _engagement_context(db: Session, user: User, engagement: Engagement) -> dict:
     return {
         "engagement": engagement,
+        "has_client_view": bool(client_visible_kinds(db, engagement.type_key)),
         "tree": deliverable_service.engagement_tree(db, engagement),
         "can_edit": can_edit_engagement(db, user, engagement.id),
         "my_role": membership_role(db, user, engagement.id),
@@ -207,6 +211,12 @@ def _team_context(db: Session, user: User, engagement: Engagement) -> dict:
         "candidates": [u for u in user_service.list_internal_users(db) if u.id not in member_ids],
         "roles": MEMBERSHIP_ROLES,
         "can_manage": user.bypasses_membership,
+        # Client access (portal): same gate as other engagement-scoped actions.
+        "has_client_view": bool(client_visible_kinds(db, engagement.type_key)),
+        "client_members": client_portal.list_client_members(db, engagement.id),
+        "invitable": client_portal.list_invitable_contacts(db, engagement),
+        "can_manage_clients": can_edit_engagement(db, user, engagement.id),
+        "scopes": VIEWER_SCOPES,
     }
 
 
@@ -214,8 +224,11 @@ def _team_context(db: Session, user: User, engagement: Engagement) -> dict:
 def engagement_detail(engagement_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
                       user: User = Depends(current_user)):
     engagement = get_visible_engagement(db, user, engagement_id)
-    return render(request, "engagement_detail.html", nav=f"board:{engagement.type_key}",
-                  **_engagement_context(db, user, engagement), team=_team_context(db, user, engagement))
+    ctx = _engagement_context(db, user, engagement)
+    view = "client" if request.query_params.get("view") == "client" and ctx["has_client_view"] else "internal"
+    client_sections = client_portal.derive_client_view(db, engagement) if view == "client" else []
+    return render(request, "engagement_detail.html", nav=f"board:{engagement.type_key}", view=view,
+                  client_sections=client_sections, **ctx, team=_team_context(db, user, engagement))
 
 
 @router.post("/engagements/{engagement_id}/stage")
@@ -326,6 +339,42 @@ def member_remove(engagement_id: uuid.UUID, member_user_id: uuid.UUID, request: 
     return _back(f"/engagements/{engagement_id}")
 
 
+# ---------------------------------------------------------------- client access (portal)
+
+
+@router.post("/engagements/{engagement_id}/client-access")
+def client_invite(engagement_id: uuid.UUID, request: Request, contact_id: str = Form(""),
+                  viewer_scope: str = Form("full"), db: Session = Depends(get_db), user: User = Depends(current_user)):
+    cid = _uuid(contact_id)
+    if cid is None:
+        raise ValidationError("Pick a contact to invite")
+    client_portal.invite_client_contact(db, user, engagement_id, contact_id=cid, viewer_scope=viewer_scope)
+    db.commit()
+    if is_htmx(request):
+        return _team_response(request, db, user, engagement_id, False)
+    return _back(f"/engagements/{engagement_id}")
+
+
+@router.post("/engagements/{engagement_id}/client-access/{client_user_id}/scope")
+def client_scope(engagement_id: uuid.UUID, client_user_id: uuid.UUID, request: Request,
+                 viewer_scope: str = Form(""), db: Session = Depends(get_db), user: User = Depends(current_user)):
+    client_portal.set_client_scope(db, user, engagement_id, user_id=client_user_id, viewer_scope=viewer_scope)
+    db.commit()
+    if is_htmx(request):
+        return _team_response(request, db, user, engagement_id, False)
+    return _back(f"/engagements/{engagement_id}")
+
+
+@router.post("/engagements/{engagement_id}/client-access/{client_user_id}/remove")
+def client_revoke(engagement_id: uuid.UUID, client_user_id: uuid.UUID, request: Request,
+                  db: Session = Depends(get_db), user: User = Depends(current_user)):
+    client_portal.revoke_client_access(db, user, engagement_id, user_id=client_user_id)
+    db.commit()
+    if is_htmx(request):
+        return _team_response(request, db, user, engagement_id, False)
+    return _back(f"/engagements/{engagement_id}")
+
+
 # ---------------------------------------------------------------- deliverables
 
 
@@ -379,18 +428,38 @@ def deliverables_panel(engagement_id: uuid.UUID, request: Request, db: Session =
     return render(request, "partials/deliverables_panel.html", **_engagement_context(db, user, engagement))
 
 
-def _chat_response(request: Request, db: Session, user: User, deliverable_id: uuid.UUID, **headers):
+def _chat_response(request: Request, db: Session, user: User, deliverable_id: uuid.UUID, channel: str = "internal",
+                   **headers):
+    """The pop-up has two structurally separate channels: internal notes (deliverable_activity)
+    and, for client-visible kinds, the client thread (deliverable_comments)."""
     d = get_visible_deliverable(db, user, deliverable_id)
-    activity = list(reversed(deliverable_service.list_activity(db, d.id)))  # oldest first, chat-style
-    resp = render(request, "partials/chat.html", d=d, activity=activity)
+    client_ok = d.kind in client_visible_kinds(db, d.engagement_type_key)
+    channel = "client" if channel == "client" and client_ok else "internal"
+    ctx = {"d": d, "channel": channel, "client_ok": client_ok}
+    if channel == "client":
+        ctx["comments"] = client_portal.list_comments(db, user, d.id)
+        ctx["reviews"] = client_portal.list_reviews(db, d.id)
+    else:
+        ctx["activity"] = list(reversed(deliverable_service.list_activity(db, d.id)))  # oldest first, chat-style
+    resp = render(request, "partials/chat.html", **ctx)
     resp.headers.update(headers)
     return resp
 
 
 @router.get("/deliverables/{deliverable_id}/chat")
-def deliverable_chat(deliverable_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
-                     user: User = Depends(current_user)):
-    return _chat_response(request, db, user, deliverable_id)
+def deliverable_chat(deliverable_id: uuid.UUID, request: Request, channel: str = "internal",
+                     db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return _chat_response(request, db, user, deliverable_id, channel)
+
+
+@router.post("/deliverables/{deliverable_id}/client-comments")
+def deliverable_client_comment(deliverable_id: uuid.UUID, request: Request, body: str = Form(""),
+                               db: Session = Depends(get_db), user: User = Depends(current_user)):
+    client_portal.add_client_comment(db, user, deliverable_id, body=body)
+    db.commit()
+    if is_htmx(request):
+        return _chat_response(request, db, user, deliverable_id, "client", **{"HX-Trigger": "notesChanged"})
+    return _back(f"/deliverables/{deliverable_id}#client")
 
 
 @router.post("/deliverables/{deliverable_id}/chat")
@@ -428,17 +497,31 @@ def deliverable_detail(deliverable_id: uuid.UUID, request: Request, db: Session 
         can_edit=can_edit_engagement(db, user, engagement.id),
         team=membership_service.list_members(db, engagement.id),
         pipeline_statuses=PIPELINE_STATUSES, priorities=deliverable_service.PRIORITIES,
+        **_client_detail(db, user, d),
     )
+
+
+def _client_detail(db: Session, user: User, d: Deliverable) -> dict:
+    """The client-facing side of a deliverable, as internal users see it."""
+    if d.kind not in client_visible_kinds(db, d.engagement_type_key):
+        return {"client_ok": False}
+    return {
+        "client_ok": True,
+        "client_members": client_portal.list_client_members(db, d.engagement_id),
+        "client_comments": client_portal.list_comments(db, user, d.id),
+        "reviews": client_portal.list_reviews(db, d.id),
+    }
 
 
 @router.post("/deliverables/{deliverable_id}/edit")
 async def deliverable_edit(deliverable_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
                            user: User = Depends(current_user)):
     form = await request.form()
+    extra = {"client_owner_user_id": _uuid(form.get("client_owner_id"))} if "client_owner_id" in form else {}
     deliverable_service.update_deliverable(
         db, user, deliverable_id, name=form.get("name", ""),
         internal_assignee_user_id=_uuid(form.get("assignee_id")), priority=form.get("priority") or None,
-        target_date=form.get("target_date") or None, hours_estimated=form.get("hours_estimated") or None,
+        target_date=form.get("target_date") or None, hours_estimated=form.get("hours_estimated") or None, **extra,
     )
     db.commit()
     return _back(f"/deliverables/{deliverable_id}")

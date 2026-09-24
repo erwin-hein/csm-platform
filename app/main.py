@@ -7,7 +7,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
 from app.errors import ServiceError
-from app.web import auth, pages
+from app.web import auth, pages, portal
 from app.web.csrf import OriginCheckMiddleware
 from app.web.templating import is_htmx, render
 
@@ -21,6 +21,7 @@ app.add_middleware(OriginCheckMiddleware)
 app.mount("/static", StaticFiles(directory=Path(__file__).resolve().parent / "static"), name="static")
 app.include_router(auth.router)
 app.include_router(pages.router)
+app.include_router(portal.router)
 
 
 @app.get("/healthz")
@@ -33,6 +34,13 @@ def login_required(request: Request, exc: auth.LoginRequired):
     if is_htmx(request):
         return HTMLResponse("", headers={"HX-Redirect": "/login"})
     return RedirectResponse("/login", status_code=303)
+
+
+@app.exception_handler(auth.WrongAudience)
+def wrong_audience(request: Request, exc: auth.WrongAudience):
+    if is_htmx(request):
+        return HTMLResponse("", headers={"HX-Redirect": exc.home})
+    return RedirectResponse(exc.home, status_code=303)
 
 
 @app.exception_handler(ServiceError)

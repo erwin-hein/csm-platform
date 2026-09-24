@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "macros.html" import status_pill, dep_signal, type_badge, initials %}
+{% from "portal/macros.html" import verdict_chip %}
 {% block title %}{{ d.name }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/">Portfolio</a> › <a href="/clients/{{ engagement.client.id }}">{{ engagement.client.name }}</a> ›
@@ -84,7 +85,7 @@
     {% endif %}
 
     <div class="card">
-      <h2>Activity <span class="small muted" style="font-weight:400">— internal only</span></h2>
+      <h2>Internal notes & activity <span class="small muted" style="font-weight:400">— never visible to clients</span></h2>
             <form method="post" action="/deliverables/{{ d.id }}/notes" style="margin-bottom:10px">
         <textarea name="body" placeholder="Add an internal note…" required></textarea>
         <button class="btn small" type="submit" style="margin-top:6px">Add note</button>
@@ -112,6 +113,12 @@
           <select name="priority"><option value="">—</option>{% for p in priorities %}<option {{ 'selected' if p == d.priority }}>{{ p }}</option>{% endfor %}</select></label>
         <label class="field"><span>Target date</span><input type="date" name="target_date" value="{{ d.target_date or '' }}"></label>
         <label class="field"><span>Hours estimated</span><input type="number" step="0.25" min="0" name="hours_estimated" value="{{ d.hours_estimated if d.hours_estimated is not none else '' }}"></label>
+        {% if client_ok %}
+        <label class="field"><span>Client owner (QA / sign-off)</span>
+          <select name="client_owner_id"><option value="">— none —</option>
+            {% for m in client_members %}<option value="{{ m.user_id }}" {{ 'selected' if m.user_id == d.client_owner_user_id }}>{{ m.user.label }}{{ ' (lead)' if m.viewer_scope == 'full' }}</option>{% endfor %}</select>
+          <div class="help">Client users with portal access. A scoped client user sees only what they own.</div></label>
+        {% endif %}
         <button class="btn small" type="submit">Save details</button>
       </form>
       <form method="post" action="/deliverables/{{ d.id }}/applicable" style="margin-top:12px">
@@ -129,6 +136,31 @@
       <p class="small muted">You have view-only access.</p>
       {% endif %}
     </div>
+
+    {% if client_ok %}
+    <div class="card client-card" id="client">
+      <h2>Client <span class="client-tag">Visible to the client</span></h2>
+      <dl class="kv">
+        <dt>Client owner</dt><dd>{{ d.client_owner.label if d.client_owner else '—' }}</dd>
+        <dt>Verdict</dt><dd>{% if reviews %}{{ verdict_chip(reviews[0]) }} <span class="small muted">{{ reviews[0].reviewer.label }}, {{ reviews[0].created_at.strftime('%b %d') }}</span>{% else %}<span class="muted">none yet</span>{% endif %}</dd>
+      </dl>
+      <p class="help">Verdicts open to the client once this is in {{ PIPELINE_LABELS['external_validation'] | lower }} (UAT). A verdict never changes the pipeline status. Moving it to done is still your call.</p>
+      {% if reviews | length > 1 %}<ul class="activity small">{% for r in reviews[1:] %}<li>{{ verdict_chip(r) }} {{ r.reviewer.label }} <span class="muted">· {{ r.created_at.strftime('%b %d, %H:%M') }}</span></li>{% endfor %}</ul>{% endif %}
+      <h3 style="margin-top:12px">Client thread</h3>
+      <ol class="chat-log portal-thread">
+        {% for c in client_comments %}
+        <li class="chat-msg {{ 'mine' if c.author_user_id == user.id }}">
+          <div class="chat-meta"><b>{{ c.author.label }}</b>{% if c.author.user_type == 'client_external' %} · client{% endif %} · {{ c.created_at.strftime('%b %d, %H:%M') }}</div>
+          <div class="chat-bubble">{{ c.body }}</div>
+        </li>
+        {% else %}<li class="chat-event muted">No client comments yet.</li>{% endfor %}
+      </ol>
+      <form method="post" action="/deliverables/{{ d.id }}/client-comments">
+        <textarea name="body" placeholder="Reply to the client…" required></textarea>
+        <button class="btn small" type="submit" style="margin-top:6px">Send to client</button>
+      </form>
+    </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

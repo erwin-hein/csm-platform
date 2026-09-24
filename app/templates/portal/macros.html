@@ -1,0 +1,7 @@
+{% macro verdict_chip(review, prefix='') -%}
+{% if review %}<span class="verdict v-{{ review.verdict }}" title="{{ review.reviewer.label }}, {{ review.created_at.strftime('%b %d') }}">{% if prefix %}{{ prefix }}{% endif %}{{ verdict_labels[review.verdict] }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro client_status(d) -%}
+<span class="pill s-{{ d.pipeline_status }}">{{ status_labels[d.pipeline_status] }}</span>
+{%- endmacro %}

@@ -4,7 +4,23 @@
 <div class="stack">
   {% include "partials/engagement_header.html" %}
   <div class="grid two">
-    {% include "partials/deliverables_panel.html" %}
+    <div>
+      {% if has_client_view %}
+      <div class="view-tabs">
+        <a class="internal {{ 'on' if view == 'internal' }}" href="/engagements/{{ engagement.id }}">Internal</a>
+        <a class="client {{ 'on' if view == 'client' }}" href="/engagements/{{ engagement.id }}?view=client">Client view</a>
+      </div>
+      {% endif %}
+      {% if view == 'client' %}
+      <div class="card small client-preview-note">What a client project lead sees in the portal: only
+        {% for k in engagement.type.kinds if k.client_visible %}{{ k.display_name | lower }}s{{ ', ' if not loop.last }}{% endfor %},
+        with their verdicts and the client thread. Scoped client users see only what they own.</div>
+      {% set sections = client_sections %}{% set link_prefix = '/deliverables/' %}
+      {% include "portal/_deliverables.html" %}
+      {% else %}
+      {% include "partials/deliverables_panel.html" %}
+      {% endif %}
+    </div>
     <div class="stack">
       {% set compact = False %}
       {% include "partials/team_panel.html" %}

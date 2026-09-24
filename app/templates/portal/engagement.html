@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% from "portal/macros.html" import verdict_chip, client_status %}
+{% block title %}{{ engagement.name }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/portal">Your projects</a> ›</div>
+<div class="spread" style="margin-bottom:14px">
+  <div><h1>{{ engagement.name }}</h1>
+    <div class="muted small">{{ engagement.client.name }} · current stage: <b>{{ engagement.stage_label }}</b></div></div>
+  <div class="small muted" style="max-width:360px; text-align:right">{% if membership.viewer_scope == 'full' %}You're seeing every deliverable shared with your team, and can review any of them once it's in UAT.{% else %}You're seeing the deliverables you own; their parent dashboard is shown for context. You can review your own items once they're in UAT.{% endif %}</div>
+</div>
+{% include "portal/_deliverables.html" %}
+{% endblock %}

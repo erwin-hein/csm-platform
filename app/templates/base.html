@@ -9,7 +9,16 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body hx-boost="true">
-{% if user %}
+{% if user and user.user_type == 'client_external' %}
+<header class="topbar portal-bar">
+  <a class="brand" href="/portal">Shearwater <span>Client portal</span></a>
+  <nav><a href="/portal" class="{{ 'active' if nav == 'portal' }}">Your projects</a></nav>
+  <div class="me">
+    <span>{{ user.label }}</span>
+    <form method="post" action="/logout"><button type="submit">Sign out</button></form>
+  </div>
+</header>
+{% elif user %}
 <header class="topbar">
   <a class="brand" href="/">Shearwater <span>Engagements</span></a>
   <nav>

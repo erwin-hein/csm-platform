@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Your projects{% endblock %}
+{% block content %}
+<h1>Your projects</h1>
+<p class="muted">Deliverables Shearwater is working on with you. Open one to follow progress, comment, and give your verdict when it's ready for review.</p>
+<div class="grid cols" style="margin-top:14px">
+  {% for r in rows %}{% set e = r.engagement %}
+  <a class="card portal-card" href="/portal/engagements/{{ e.id }}">
+    <div class="small muted">{{ e.client.name }}</div>
+    <h2 style="margin:2px 0 6px">{{ e.name }}</h2>
+    <div class="small">Current stage: <b>{{ e.stage_label }}</b></div>
+    <div class="progress" style="margin-top:10px">{% if r.total %}<span class="p-done" style="width: {{ 100 * r.done / r.total }}%"></span>{% endif %}</div>
+    <div class="small muted" style="margin-top:4px">{{ r.done }}/{{ r.total }} deliverables done
+      {% if r.to_review %} · <b class="to-review">{{ r.to_review }} waiting for your review</b>{% endif %}</div>
+    <div class="small muted" style="margin-top:6px">{% if r.membership.viewer_scope == 'full' %}You see every deliverable shared with your team.{% else %}You see the deliverables you own.{% endif %}</div>
+  </a>
+  {% else %}
+  <div class="card empty">You don't have access to any projects yet.</div>
+  {% endfor %}
+</div>
+{% endblock %}

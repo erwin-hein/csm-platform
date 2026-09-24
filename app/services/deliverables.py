@@ -15,12 +15,15 @@ from sqlalchemy.orm import Session
 
 from app.access import (
     can_see_engagement,
+    client_membership,
+    client_visible_kinds,
     get_visible_deliverable,
     get_editable_deliverable,
     get_editable_engagement,
 )
 from app.errors import ValidationError
 from app.events import emit, mutation
+from app.services import client_portal
 from app.models import (
     PIPELINE_STATUSES,
     Deliverable,
@@ -156,6 +159,9 @@ class Node:
     blockers: list[Deliverable]
     signal: DepSignal | None = None
     note_count: int = 0
+    client_visible: bool = False
+    verdict: object | None = None      # latest DeliverableClientReview, if any
+    client_comment_count: int = 0
     children: list["Node"] = field(default_factory=list)
     progress: Progress = field(default_factory=Progress)  # over children, for parent nodes
 
@@ -181,11 +187,15 @@ def engagement_tree(db: Session, engagement: Engagement) -> EngagementTree:
         select(Deliverable).where(Deliverable.engagement_id == engagement.id).order_by(Deliverable.created_at)
     ))
     blockers = blocker_map(db, [d.id for d in items])
-    notes = get_note_counts(db, [d.id for d in items])
+    ids = [d.id for d in items]
+    notes = get_note_counts(db, ids)
+    client_kinds = client_visible_kinds(db, engagement.type_key)
+    verdicts, client_counts = client_portal.get_latest_verdicts(db, ids), client_portal.get_comment_counts(db, ids)
     nodes = {}
     for d in items:
         state = derive_dep_state(d, blockers[d.id])
-        nodes[d.id] = Node(d, state, blockers[d.id], derive_dep_signal(d, state, blockers[d.id]), notes.get(d.id, 0))
+        nodes[d.id] = Node(d, state, blockers[d.id], derive_dep_signal(d, state, blockers[d.id]), notes.get(d.id, 0),
+                           d.kind in client_kinds, verdicts.get(d.id), client_counts.get(d.id, 0))
     for node in nodes.values():
         parent_id = node.deliverable.parent_id
         if parent_id in nodes:
@@ -275,6 +285,18 @@ def _validate_assignee(db: Session, engagement_id: uuid.UUID, user_id: uuid.UUID
         raise ValidationError(f"{user.label} isn't on this engagement's team — assign them first")
 
 
+def _validate_client_owner(db: Session, d: Deliverable, user_id: uuid.UUID | None) -> None:
+    """The client-side owner (QA / sign-off) must be a client user with access to this
+    engagement, and the deliverable's kind must be one clients can see."""
+    if user_id is None:
+        return
+    if d.kind not in client_visible_kinds(db, d.engagement_type_key):
+        raise ValidationError("Clients can't see this kind of deliverable, so it can't have a client owner")
+    user = db.get(User, user_id)
+    if user is None or user.user_type != "client_external" or client_membership(db, user, d.engagement_id) is None:
+        raise ValidationError("The client owner must be a client user with access to this engagement")
+
+
 def _parse_date(value: str | date | None) -> date | None:
     if value in (None, ""):
         return None
@@ -350,8 +372,8 @@ _UNSET = object()
 @mutation("deliverable_updated")
 def update_deliverable(db: Session, actor: User, deliverable_id: uuid.UUID, *, name=_UNSET, pipeline_status=_UNSET,
                        blocked=_UNSET, blocked_reason=_UNSET, not_applicable=_UNSET,
-                       internal_assignee_user_id=_UNSET, priority=_UNSET, target_date=_UNSET,
-                       hours_estimated=_UNSET) -> Deliverable:
+                       internal_assignee_user_id=_UNSET, client_owner_user_id=_UNSET, priority=_UNSET,
+                       target_date=_UNSET, hours_estimated=_UNSET) -> Deliverable:
     d = get_editable_deliverable(db, actor, deliverable_id)
     changes: dict[str, dict] = {}
 
@@ -382,6 +404,9 @@ def update_deliverable(db: Session, actor: User, deliverable_id: uuid.UUID, *, n
     if internal_assignee_user_id is not _UNSET:
         _validate_assignee(db, d.engagement_id, internal_assignee_user_id)
         set_field("internal_assignee_user_id", internal_assignee_user_id)
+    if client_owner_user_id is not _UNSET:
+        _validate_client_owner(db, d, client_owner_user_id)
+        set_field("client_owner_user_id", client_owner_user_id)
     if priority is not _UNSET:
         if priority and priority not in PRIORITIES:
             raise ValidationError(f"Priority must be one of {', '.join(PRIORITIES)}")
