@@ -14,18 +14,18 @@
   <div class="stepper {{ engagement.type_key }}">
     {% set cur = engagement.stage_index %}
     {% for s in engagement.type.stage_vocab %}
-      {% set cls = ('past' if loop.index0 < cur else '') ~ (' current' if loop.index0 == cur else '') ~ (' gate' if s.gate else '') %}
+      {% set cls = ('past' if loop.index0 < cur else '') ~ (' current' if loop.index0 == cur else '') %}
       {% if can_edit and loop.index0 != cur %}
       <button class="step {{ cls }}" hx-post="/engagements/{{ engagement.id }}/stage" hx-vals='{"stage": "{{ s.key }}"}'
               hx-target="#eng-header" hx-swap="outerHTML" hx-confirm="Move to “{{ s.label }}”?"
-              title="Move to {{ s.label }}">{{ s.label }}{% if s.gate %} ⛩{% endif %}</button>
+              title="Move to {{ s.label }}">{{ s.label }}</button>
       {% else %}
-      <div class="step {{ cls }}" title="{{ s.label }}">{{ s.label }}{% if s.gate %} ⛩{% endif %}</div>
+      <div class="step {{ cls }}" title="{{ s.label }}">{{ s.label }}</div>
       {% endif %}
     {% endfor %}
   </div>
   <div class="spread small muted">
-    <span>{% if engagement.type.stage_vocab | selectattr('gate') | list %}⛩ = gate stage. {% endif %}{% if can_edit %}Click a stage to move the engagement.{% endif %}</span>
+    <span>{% if can_edit %}Click a stage to move the engagement.{% endif %}</span>
     {% if can_edit %}
     <form class="row" hx-post="/engagements/{{ engagement.id }}/status" hx-target="#eng-header" hx-swap="outerHTML">
       <label>Status

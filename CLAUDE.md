@@ -74,6 +74,8 @@ CREATE TABLE engagement_memberships (
   role membership_role NOT NULL,
   PRIMARY KEY (engagement_id, user_id)
 );
+-- An engagement's owner IS its single 'owner' membership — there is no separate owner column (see §6).
+CREATE UNIQUE INDEX uq_engagement_memberships_one_owner ON engagement_memberships (engagement_id) WHERE role = 'owner';
 ```
 
 > Note: `users.llm_content_default` as a flat boolean was an intermediate design, **superseded** by the per-kind `llm_content_preferences` table below. Do not implement the flat column.
@@ -126,10 +128,10 @@ INSERT INTO engagement_types VALUES ('quickstart', 'QuickStart', 'jsonb', '[
   {"key":"post_qs","label":"Post-QS"}, {"key":"dormant","label":"Dormant"}
 ]');
 
--- 'migration': coarse 6-stage skeleton, the semantic-layer stage is a gate (flagged in the vocab itself, not a new column)
+-- 'migration': coarse 6-stage skeleton. No stage is a "gate" — stages never block work in other stages (see §6).
 INSERT INTO engagement_types VALUES ('migration', 'Migration', 'jsonb', '[
   {"key":"scoping","label":"Scoping"}, {"key":"access_setup","label":"Access & Setup"},
-  {"key":"semantic_parity","label":"Semantic-layer Parity","gate":true}, {"key":"dashboard_build","label":"Dashboard Build"},
+  {"key":"semantic_parity","label":"Semantic-layer Parity"}, {"key":"dashboard_build","label":"Dashboard Build"},
   {"key":"client_validation","label":"Client Validation"}, {"key":"golive_wrapup","label":"Go-live / Wrap-up"}
 ]');
 ```
@@ -142,7 +144,6 @@ CREATE TABLE engagements (
   name TEXT NOT NULL,                  -- "Omni Migration — 2026" etc, since a client can have several over time
   stage TEXT NOT NULL,                 -- validated app-side against the type's stage_vocab
   status TEXT DEFAULT 'active',        -- active | paused | complete | cancelled
-  owner_user_id UUID REFERENCES users(id),
   slack_channel_id TEXT,               -- engagement-scoped, ephemeral by design — client-facing channel
   internal_slack_channel_id TEXT,      -- engagement-scoped internal back-channel (never client-facing, never feeds client_contacts)
   harvest_project_id TEXT,             -- engagement-scoped, ephemeral by design
@@ -153,6 +154,7 @@ CREATE TABLE engagements (
   started_at TIMESTAMPTZ, ended_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now()
   -- NOTE: no confirmation_status column, same reasoning as clients.
+  -- NOTE: no owner_user_id column — ownership is the engagement's single 'owner' membership (see §6).
 );
 ```
 
@@ -204,9 +206,20 @@ CREATE TABLE deliverable_blockers (
   blocked_id UUID REFERENCES deliverables(id),
   blocker_id UUID REFERENCES deliverables(id),
   PRIMARY KEY (blocked_id, blocker_id)
-  -- app enforces: no self-loop, no cycle; dep_state (blocked/waiting/maybe_unblocked/clear) is derived, never stored
+  -- app enforces: no self-loop, no cycle, same engagement; dep_state (below) is derived, never stored
 );
 
+```
+
+**`dep_state`** — derived at read time from the manual `blocked` flag plus the blocker edges; "finished" means `pipeline_status='done'` or `not_applicable`:
+- `blocked` — manually flagged, and either no blocker edges or at least one unfinished blocker.
+- `maybe_unblocked` — manually flagged, but every blocker is finished: the flag is probably stale. Surfaced for a human to clear, never auto-cleared.
+- `waiting` — not flagged, but at least one blocker is unfinished.
+- `clear` — everything else.
+
+Blocker edges only connect deliverables on the same engagement.
+
+```sql
 CREATE TABLE deliverable_activity (
   id UUID PRIMARY KEY, deliverable_id UUID REFERENCES deliverables(id),
   actor_user_id UUID REFERENCES users(id), kind TEXT, body TEXT, created_at TIMESTAMPTZ DEFAULT now()
@@ -565,7 +578,7 @@ CREATE TABLE rule_firings (            -- cooldown tracking only — one row per
 - **`no_touchpoint` / `hours_burn` / `checklist_overdue`** reuse `engagement_signals`, `time_entries`, and `deliverables.pipeline_status` — no new inputs.
 - **`on_event`** rules don't get polled at all — they register as ordinary event-bus handlers, reacting immediately. Everything else runs off a scheduled job (the existing job queue), checking `rule_firings.cooldown_until` before re-evaluating.
 - **`raise_alert`** is just another `events` row (`event_type='rule_alert_raised'`, payload carries the message) — a dashboard is nothing more than "recent alert events for engagements I can see." No dedicated alert table. A "mark at risk" severity is a tag on this event's payload, **never a write to any health-adjacent column** — health stays fully derived, a rule can flag something loudly but can't hand-author the number itself.
-- **`draft_nudge`** is just another `generated_content_kinds` entry (`entity_type='engagement'`), gated through the same `llm_content_preferences` cascade as everything else — except a rules-engine firing has no acting user to resolve opt-in against. **Resolved against the engagement's owner's preference** — they're the one who'd actually act on or send the nudge, so it's their opt-in that gates whether the system spends on their behalf.
+- **`draft_nudge`** is just another `generated_content_kinds` entry (`entity_type='engagement'`), gated through the same `llm_content_preferences` cascade as everything else — except a rules-engine firing has no acting user to resolve opt-in against. **Resolved against the preference of the user holding the engagement's `owner` membership** (there's no owner column — see §6) — they're the one who'd actually act on or send the nudge, so it's their opt-in that gates whether the system spends on their behalf. An engagement with no owner membership resolves to disabled, same as a missing preference row.
 - **NL→YAML rule authoring** (an admin describes a rule in plain language, gets a schema-constrained draft) is an ungated admin utility, not routed through `llm_content_preferences` — rare, admin-only, not recurring per-engagement generation.
 
 ### Templates/checklist engine
@@ -614,14 +627,11 @@ The reference tool's one-invariant-per-file convention (filename = the pinned co
 
 Every v1 design item was settled as of 2026-09-24. This section holds whatever surfaces once development starts (a real design question always turns up mid-build that this document didn't anticipate). When that happens: add it here, work through it the same way as everything above, fold the resolution into §2/§3, and log the reasoning in §6 — the same loop this whole document was built from.
 
-**Surfaced during the PoC build (2026-09-24) — each has a provisional answer implemented in the PoC, awaiting Erwin's confirmation before folding into §2/§3/§6:**
+**Surfaced during the PoC build (2026-09-24) — each has a provisional answer implemented in the PoC, awaiting Erwin's confirmation before folding into §2/§3/§6** (the owner column, `dep_state` definitions and gate stage were resolved the same day — see §6):
 
 1. **Which deliverable kind may parent which.** §3 says trees are ≤2 levels (phase→milestone, dashboard→tile) but `deliverable_kinds` has no column expressing it, so nothing stops a tile under a phase. *Provisional:* nullable `deliverable_kinds.parent_kind` (composite self-FK); NULL = root kind; a child kind requires a parent of exactly that kind, a root kind forbids one. This also lets the engagement view be driven entirely by data (sections = root kinds) rather than per-type templates.
-2. **`engagements.owner_user_id` vs. `engagement_memberships.role='owner'`.** Both exist in §3 with no stated relationship. *Provisional:* at most one `owner` membership per engagement (partial unique index), mirrored onto `owner_user_id`; assigning a new owner demotes the previous one to collaborator; removing the owner nulls the column.
-3. **`dep_state` definitions.** §3 names the four values (blocked/waiting/maybe_unblocked/clear) but doesn't define them. *Provisional:* `blocked` = manually flagged, and either no blocker edges or at least one unfinished blocker; `maybe_unblocked` = manually flagged but every blocker is done/N/A (flag probably stale — prompt a human, never auto-clear); `waiting` = not flagged but ≥1 unfinished blocker; `clear` = otherwise. "Finished" = `done` or `not_applicable`. Blockers must be on the same engagement.
-4. **Who can create clients/engagements and manage memberships.** §3 gates the portal *invite* action (owner/collaborator or ops/admin) and calls membership granting "an ops-side action", but doesn't say who creates Clients/Engagements. *Provisional:* ops/admin only for create-client, create-engagement, aliases/contacts, and membership management; owner/collaborator (or ops/admin) for deliverable edits and stage moves; `viewer` read-only.
-5. **What a `"gate": true` stage actually enforces.** The migration vocab flags `semantic_parity` as a gate but nothing defines the gate's semantics (block advancing until its deliverables are done? require an explicit sign-off?). *Provisional:* display-only (marked on the board and stepper); no enforcement.
-6. **Logging in as seeded/demo users.** Google-only auth means fictional seed users can't be logged into, which blocks the "log in as an analyst" demo. *Provisional:* a passcode-gated demo login (off unless `DEV_LOGIN_PASSCODE` is set) that goes through the same user-resolution path. Long-term, the admin "act as another user" impersonation noted in §2 row 16 is probably the real answer.
+2. **Who can create clients/engagements and manage memberships.** §3 gates the portal *invite* action (owner/collaborator or ops/admin) and calls membership granting "an ops-side action", but doesn't say who creates Clients/Engagements. *Provisional:* ops/admin only for create-client, create-engagement, aliases/contacts, and membership management; owner/collaborator (or ops/admin) for deliverable edits and stage moves; `viewer` read-only.
+3. **Logging in as seeded/demo users.** Google-only auth means fictional seed users can't be logged into, which blocks the "log in as an analyst" demo. *Provisional:* a passcode-gated demo login (off unless `DEV_LOGIN_PASSCODE` is set) that goes through the same user-resolution path. Long-term, the admin "act as another user" impersonation noted in §2 row 16 is probably the real answer.
 
 ---
 
@@ -651,3 +661,6 @@ Dated entries for traceability — why something is the way it is, in case it's 
 - **Templates engine collapsed from three concerns to one**: the reference tool's template engine seeded checklists, portal visibility, and default rules. Two of those turned out to be moot here as a direct consequence of earlier decisions — portal visibility toggles were deferred entirely, and rules are globally-defined/type-scoped rather than per-engagement, so neither needs seeding. Only checklist seeding survives, and it reuses the Deliverables engine rather than inventing a second entity type, since a checklist item is structurally just a lightweight deliverable.
 - **v1 design phase closed out (2026-09-24)**: every tracked Open item is resolved. §5 stays in the document as a live placeholder rather than being deleted, since a real design question always surfaces mid-build — the expectation going forward is that it gets added there, worked through the same way, and folded back into §2/§3/§6, not left to live only in a conversation or a commit message.
 - **`quickstart` and `migration` stage/kind vocabularies drafted (2026-09-24)**: previously left as "shape defined, vocab TBD" in §3. Forced concrete by PoC seed-data needs; drafted from the reference tool's actual vocabulary (its QS stage list, its 6-stage migration skeleton including the semantic-layer-parity gate) rather than invented fresh — see engagement_types and deliverable_kinds seed statements above.
+- **`engagements.owner_user_id` dropped — ownership lives only in `engagement_memberships` (2026-09-24)**: surfaced during the PoC, where the column and `role='owner'` memberships were two unreconciled sources of truth for the same fact. Erwin: the column was a legacy carryover from the reference tool. An engagement's owner is now its single `owner` membership (partial unique index enforces one); the rules engine's `draft_nudge` opt-in resolves against that membership instead of a column.
+- **`dep_state` definitions confirmed (2026-09-24)**: §3 had named the four states without defining them. The PoC's definitions (blocked / maybe_unblocked / waiting / clear, built from the manual flag plus blocker edges, "finished" = done or N/A) were confirmed by Erwin as-is and folded into §3 Deliverables. The load-bearing choice is that `maybe_unblocked` never auto-clears the manual flag — the same "explicit human decision" principle as elsewhere.
+- **Gate stages removed entirely (2026-09-24)**: the migration vocab drafted from the reference tool flagged `semantic_parity` as a `"gate": true` stage (don't start dashboards until the semantic layer matches the old tool). Erwin rejected the concept outright, not just its enforcement: in real projects modeling and dashboarding happen in tandem, and a gate reinforces the wrong expectation that one must wait for the other. The flag is gone from the vocab, the schema and the UI; this supersedes the "including the semantic-layer-parity gate" wording in the vocab-drafting entry above. Stages describe where an engagement is, never what work is allowed.

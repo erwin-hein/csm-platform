@@ -16,8 +16,8 @@
 </div>
 <div class="board {{ etype.key }}">
   {% for stage in etype.stage_vocab %}
-  <div class="col {{ 'gate' if stage.gate }}">
-    <div class="col-head"><span>{{ stage.label }}{% if stage.gate %}<span class="gate-mark" title="Gate stage">GATE</span>{% endif %}</span><span class="muted">{{ columns[stage.key] | length }}</span></div>
+  <div class="col">
+    <div class="col-head"><span>{{ stage.label }}</span><span class="muted">{{ columns[stage.key] | length }}</span></div>
     {% for s in columns[stage.key] %}{% set e = s.engagement %}
     <a class="ecard" href="/engagements/{{ e.id }}">
       <div class="client">{{ e.client.name }}</div>

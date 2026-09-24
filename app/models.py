@@ -78,8 +78,8 @@ class User(Base):
 class EngagementMembership(Base):
     __tablename__ = "engagement_memberships"
     __table_args__ = (
-        # PoC decision (see CLAUDE.md §5): at most one 'owner' membership per engagement,
-        # mirrored onto engagements.owner_user_id.
+        # At most one 'owner' membership per engagement — the owner membership *is* the
+        # engagement's owner; there is no separate owner column (CLAUDE.md §6).
         Index(
             "uq_engagement_memberships_one_owner",
             "engagement_id",
@@ -178,7 +178,6 @@ class Engagement(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     stage: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, server_default="active", default="active")
-    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     # The next five columns are part of the §3 table but belong to features outside the
     # PoC (Slack, Harvest, health). They exist in the schema; nothing reads or writes them.
     slack_channel_id: Mapped[str | None] = mapped_column(Text)
@@ -193,12 +192,16 @@ class Engagement(Base):
 
     client: Mapped[Client] = relationship(back_populates="engagements")
     type: Mapped[EngagementType] = relationship(lazy="joined")
-    owner: Mapped[User | None] = relationship()
     memberships: Mapped[list[EngagementMembership]] = relationship(back_populates="engagement")
     deliverables: Mapped[list["Deliverable"]] = relationship(
         back_populates="engagement", order_by="Deliverable.created_at",
         primaryjoin="Engagement.id == foreign(Deliverable.engagement_id)",
     )
+
+    @property
+    def owner(self) -> User | None:
+        """The user holding the engagement's (single) 'owner' membership, if any."""
+        return next((m.user for m in self.memberships if m.role == "owner"), None)
 
     @property
     def stage_label(self) -> str:

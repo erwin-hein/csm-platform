@@ -17,9 +17,31 @@ underneath. None of the integrations, LLM features, portal, rules engine or dige
 | Auth | `app/web/auth.py`. Google OAuth limited to `@shearwaterdata.com` (checked server-side), `ADMIN_EMAILS` bootstrap, signed httponly session cookie. `app/web/csrf.py` does the Origin/Referer check |
 | Seed data | `app/seed.py`. Runs through the real service functions, so seeded rows emit events too |
 | Tests | `tests/`. One invariant per file |
-| Deploy | `render.yaml` (Blueprint) and `scripts/start.sh` |
+| Deploy / local run | `render.yaml` (Blueprint), `scripts/start.sh`, `Dockerfile` and `docker-compose.yml` |
 
 ## Running locally
+
+There's no pre-built image to pull. Clone the repo and build it locally.
+
+### With Docker (recommended: no Python or Postgres install needed)
+
+Requires Docker Desktop (or Docker Engine with Compose v2).
+
+```bash
+git clone https://github.com/erwin-hein/csm-platform.git
+cd csm-platform
+docker compose up --build
+# → http://localhost:8000/demo-login  (passcode: demo)
+```
+
+The first start migrates the database and seeds the demo data. Restarts keep your data and skip seeding.
+
+- **Stop:** Ctrl+C, or `docker compose down`.
+- **Start over with fresh demo data:** `docker compose down -v` (deletes the database volume), then `docker compose up`.
+- **Pick up code changes:** `git pull`, then `docker compose up --build`.
+- **Optional settings:** `ADMIN_EMAILS` and the Google OAuth vars can go in a `.env` file next to `docker-compose.yml`.
+
+### Without Docker
 
 Requires Python 3.11+, [uv](https://docs.astral.sh/uv/) and a local Postgres.
 
@@ -60,7 +82,7 @@ Sign in at `/demo-login` as **Morgan Ellis (admin)**.
 
 1. **Managing projects.** On Portfolio, click **+ Add Client**, then **+ Add Engagement**. The type picker shows both stage vocabularies and deliverable structures. On the new engagement, use **+ Add Phase**, then **+ Milestone** under it. Asking for a milestone with no phase, or a tile under a phase, shows the server's refusal inline. Open a deliverable to add a dependency (Waits on…) or flag it blocked.
 2. **Assigning people.** Open **Team assignment**. *Harbor & Pine Power BI → Omni Migration* is highlighted as having no team. Assign someone as owner. The same panel sits on every engagement page.
-3. **Two different engagement types.** The **QuickStart board** has 8 stage columns and the **Migration board** has 6, with *Semantic-layer Parity* marked as a gate. Open *Northwind QuickStart — 2026* (a flat curriculum list), then *Bluefin Tableau → Omni Migration* (two trees: Phases → Milestones and Dashboards → Tiles, with rollups). Bluefin's *Denial rate by payer* shows **Blocked**, *Bed occupancy trend* shows **Maybe unblocked**, and *Parity sign-off* shows **Waiting**. All three are derived from blocker edges plus the manual flag.
+3. **Two different engagement types.** The **QuickStart board** has 8 stage columns and the **Migration board** has 6. Open *Northwind QuickStart — 2026* (a flat curriculum list), then *Bluefin Tableau → Omni Migration* (two trees: Phases → Milestones and Dashboards → Tiles, with rollups). Bluefin's *Denial rate by payer* shows **Blocked**, *Bed occupancy trend* shows **Maybe unblocked**, and *Parity sign-off* shows **Waiting**. All three are derived from blocker edges plus the manual flag.
 4. **Access control.** Sign out and sign in as **Aisha Bello (analyst)**. She sees Cobalt's Migration but not Cobalt's QuickStart on the same client, and gets a 404 on anything else. If you assigned her to Harbor & Pine in step 2, it shows up now.
 5. **The spine.** Every step above shows up in **Event log** (admin/ops), in the same transaction as the write.
 
@@ -82,7 +104,7 @@ These are small calls I made without you. Each one can be reverted. The larger s
 - `deliverable_kinds.parent_kind` says which kind may parent which. The ≤2-level trees needed it (see §5).
 - A composite FK `deliverables(engagement_id, engagement_type_key) → engagements(id, type_key)`, so the denormalized type key can't drift.
 - CHECK constraints on `pipeline_status`, `engagements.status`, no self-parent, and no self-blocker.
-- A partial unique index allowing one `owner` membership per engagement (see §5).
+- A partial unique index allowing one `owner` membership per engagement. That membership *is* the owner; there is no owner column (now in CLAUDE.md §3/§6).
 - A trigger that makes `events` append-only.
 - `created_at` also gets a Python-side default, so rows created in one transaction still sort in creation order.
 - Out-of-scope columns that §3 puts on `engagements` (`slack_channel_id`, `internal_slack_channel_id`, `harvest_project_id`, `expected_scope`, `health`) are in the schema to match the spec, but nothing reads or writes them.

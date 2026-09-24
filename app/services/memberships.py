@@ -17,12 +17,19 @@ def list_members(db: Session, engagement_id: uuid.UUID) -> list[EngagementMember
     return sorted(rows, key=lambda m: (order[m.role], m.user.label))
 
 
+def get_engagement_owner(db: Session, engagement_id: uuid.UUID) -> User | None:
+    """The engagement's owner = its single 'owner' membership. The one place anything
+    that needs "the engagement's owner" (e.g. the rules engine's draft_nudge opt-in,
+    CLAUDE.md §3) should resolve it from."""
+    return db.scalar(select(User).join(EngagementMembership, EngagementMembership.user_id == User.id).where(
+        EngagementMembership.engagement_id == engagement_id, EngagementMembership.role == "owner"))
+
+
 @mutation("membership_granted")
 def assign_member(db: Session, actor: User, engagement_id: uuid.UUID, *, user_id: uuid.UUID,
                   role: str) -> EngagementMembership:
-    """Grant (or change) a user's role on an engagement. PoC rule: one owner per
-    engagement, mirrored onto engagements.owner_user_id; making someone owner
-    demotes the previous owner to collaborator."""
+    """Grant (or change) a user's role on an engagement. One owner per engagement:
+    making someone owner demotes the previous owner to collaborator."""
     require_ops_or_admin(actor)
     engagement = get_visible_engagement(db, actor, engagement_id)
     if role not in MEMBERSHIP_ROLES:
@@ -53,11 +60,8 @@ def assign_member(db: Session, actor: User, engagement_id: uuid.UUID, *, user_id
     else:
         membership.role = role
 
-    if role == "owner":
-        engagement.owner_user_id = user.id
-    elif engagement.owner_user_id == user.id:
-        engagement.owner_user_id = None
-
+    db.flush()
+    db.expire(engagement, ["memberships"])
     emit(db, entity_type="engagement", entity_id=engagement.id, event_type="membership_granted", actor=actor,
          payload={"user_id": user.id, "email": user.email, "role": role, "previous_role": previous_role,
                   "demoted_owner_user_id": demoted})
@@ -73,7 +77,7 @@ def remove_member(db: Session, actor: User, engagement_id: uuid.UUID, *, user_id
         raise NotFound("That user isn't on this engagement")
     role = membership.role
     db.delete(membership)
-    if engagement.owner_user_id == user_id:
-        engagement.owner_user_id = None
+    db.flush()
+    db.expire(engagement, ["memberships"])
     emit(db, entity_type="engagement", entity_id=engagement.id, event_type="membership_revoked", actor=actor,
          payload={"user_id": user_id, "role": role})

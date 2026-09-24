@@ -1,0 +1,36 @@
+# Local run: `docker compose up --build`, then open http://localhost:8000/demo-login (passcode: demo).
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: csm
+      POSTGRES_PASSWORD: csm
+      POSTGRES_DB: csm
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U csm -d csm"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  web:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://csm:csm@db:5432/csm
+      SECRET_KEY: local-dev-only-secret
+      SESSION_HTTPS_ONLY: "false"          # plain http on localhost
+      DEV_LOGIN_PASSCODE: demo
+      SEED_DEMO_DATA: "true"               # seeds only when the database is empty
+      # Optional — set in your shell or a .env file next to this one:
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+
+volumes:
+  pgdata:

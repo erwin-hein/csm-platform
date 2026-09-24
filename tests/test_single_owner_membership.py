@@ -5,14 +5,29 @@ from app.models import EngagementMembership
 from app.services import memberships as M
 
 
-def test_new_owner_demotes_previous_and_mirrors_owner_column(db, world):
+def test_owner_is_the_single_owner_membership(db, world):
     e = world.alice_eng
-    assert e.owner_user_id == world.alice.id
+    assert M.get_engagement_owner(db, e.id) == world.alice and e.owner == world.alice
     M.assign_member(db, world.admin, e.id, user_id=world.bob.id, role="owner")
-    assert e.owner_user_id == world.bob.id
+    assert M.get_engagement_owner(db, e.id) == world.bob and e.owner == world.bob
     assert db.get(EngagementMembership, (e.id, world.alice.id)).role == "collaborator"
     M.remove_member(db, world.admin, e.id, user_id=world.bob.id)
-    assert e.owner_user_id is None
+    assert M.get_engagement_owner(db, e.id) is None and e.owner is None
+
+
+def test_engagements_have_no_owner_column():
+    from app.models import Engagement
+    assert "owner_user_id" not in Engagement.__table__.columns
+
+
+def test_database_allows_only_one_owner_membership(db, world):
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+    sp = db.begin_nested()
+    with pytest.raises(IntegrityError):
+        db.add(EngagementMembership(engagement_id=world.alice_eng.id, user_id=world.bob.id, role="owner"))
+        db.flush()
+    sp.rollback()
 
 
 def test_only_ops_or_admin_manage_memberships(db, world):
