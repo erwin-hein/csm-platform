@@ -1,0 +1,56 @@
+{% from "macros.html" import type_badge, initials, eng_status %}
+{% set u = p.user %}
+<div class="card person" id="person-{{ u.id }}">
+  <div class="spread person-head">
+    <div class="row" style="gap:10px">{{ initials(u) }}
+      <div><b>{{ u.label }}</b> <span class="role-chip">{{ u.role }}</span><div class="small muted">{{ u.email }}</div></div></div>
+    {% if u.bypasses_membership %}<span class="small muted">Sees every engagement via role</span>{% endif %}
+  </div>
+
+  <div class="person-stats">
+    <div><b>{{ p.count('owner') }}</b><span>owned</span></div>
+    <div><b>{{ p.count('collaborator') }}</b><span>collaborating</span></div>
+    <div><b>{{ p.open_items }}</b><span>open items</span></div>
+    <div><b>{{ p.open_hours | float | round(1) }}h</b><span>est. open work</span></div>
+    <div class="{{ 'warn' if p.overdue }}"><b>{{ p.overdue }}</b><span>overdue</span></div>
+    <div><b>{{ p.due_soon }}</b><span>due in 14 days</span></div>
+  </div>
+  <div class="load" title="Estimated open hours, relative to the busiest person on the team">
+    <span style="width: {{ (100 * p.open_hours / max_hours) | round(0) }}%"></span>
+  </div>
+  {% if p.unestimated %}<div class="small muted" style="margin-top:4px">{{ p.unestimated }} open item{{ 's' if p.unestimated != 1 }} without an hours estimate.</div>{% endif %}
+
+  <ul class="alloc-list">
+    {% for a in p.allocations %}{% set e = a.engagement %}
+    <li>
+      <div class="alloc-name">{{ type_badge(e.type) }}
+        <div><a href="/engagements/{{ e.id }}"><b>{{ e.name }}</b></a> {{ eng_status(e.status) }}
+          <div class="small muted">{{ e.client.name }} · {{ e.stage_label }} · {{ a.open_items }} open{% if a.open_hours %} · {{ a.open_hours | float | round(1) }}h{% endif %}</div></div></div>
+      <div class="row" style="gap:6px">
+        <form class="inline" hx-post="/engagements/{{ e.id }}/members" hx-target="#person-{{ u.id }}" hx-swap="outerHTML">
+          <input type="hidden" name="user_id" value="{{ u.id }}"><input type="hidden" name="panel" value="person">
+          <select name="role" onchange="this.form.requestSubmit()">{% for r in roles %}<option {{ 'selected' if r == a.role }}>{{ r }}</option>{% endfor %}</select>
+        </form>
+        <form class="inline" hx-post="/engagements/{{ e.id }}/members/{{ u.id }}/remove" hx-target="#person-{{ u.id }}" hx-swap="outerHTML"
+              hx-confirm="Remove {{ u.label }} from {{ e.name }}? They'll lose access.">
+          <input type="hidden" name="panel" value="person">
+          <button class="btn small danger" type="submit" title="Remove">✕</button>
+        </form>
+      </div>
+    </li>
+    {% else %}<li class="muted small">Not on any open engagement.</li>{% endfor %}
+  </ul>
+
+  {% set mine = p.allocations | map(attribute='engagement') | map(attribute='id') | list %}
+  {% set available = open_engagements | rejectattr('id', 'in', mine) | list %}
+  {% if available %}
+  <form class="row alloc-form" hx-post="/team/people/{{ u.id }}/allocate" hx-target="#person-{{ u.id }}" hx-swap="outerHTML">
+    <select name="engagement_id" required>
+      <option value="">+ Allocate to an engagement…</option>
+      {% for e in available %}<option value="{{ e.id }}">{{ e.client.name }} · {{ e.name }}</option>{% endfor %}
+    </select>
+    <select name="role">{% for r in roles %}<option {{ 'selected' if r == 'collaborator' }}>{{ r }}</option>{% endfor %}</select>
+    <button class="btn small primary" type="submit">Allocate</button>
+  </form>
+  {% endif %}
+</div>

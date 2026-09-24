@@ -30,6 +30,7 @@ from app.models import (
     Event,
     User,
 )
+from app.services import capacity as capacity_service
 from app.services import clients as client_service
 from app.services import deliverables as deliverable_service
 from app.services import engagements as engagement_service
@@ -73,14 +74,24 @@ def _engagement_summary(db: Session, engagement: Engagement) -> dict:
 # ---------------------------------------------------------------- portfolio
 
 
+CLOSED_STATUSES = ("complete", "cancelled")
+
+
 @router.get("/")
-def portfolio(request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def portfolio(request: Request, show_closed: bool = False, db: Session = Depends(get_db),
+              user: User = Depends(current_user)):
+    """Completed/cancelled engagements are hidden unless ?show_closed=true."""
     engagements = engagement_service.list_visible_engagements(db, user)
     by_client: dict[uuid.UUID, list[dict]] = defaultdict(list)
+    hidden: dict[uuid.UUID, int] = defaultdict(int)
     for e in engagements:
+        if e.status in CLOSED_STATUSES and not show_closed:
+            hidden[e.client_id] += 1
+            continue
         by_client[e.client_id].append(_engagement_summary(db, e))
     clients = client_service.list_visible_clients(db, user)
     return render(request, "portfolio.html", nav="portfolio", clients=clients, by_client=by_client,
+                  hidden=hidden, hidden_total=sum(hidden.values()), show_closed=show_closed,
                   types=engagement_service.list_engagement_types(db))
 
 
@@ -235,7 +246,44 @@ def _team_response(request: Request, db: Session, user: User, engagement_id: uui
     return render(request, "partials/team_panel.html", team=_team_context(db, user, engagement), compact=compact)
 
 
+def _capacity_context(db: Session, user: User) -> dict:
+    people = capacity_service.list_capacity(db, user)
+    return {
+        "people": people,
+        "max_hours": max([p.open_hours for p in people] + [1]),
+        "open_engagements": capacity_service.list_open_engagements(db),
+        "roles": MEMBERSHIP_ROLES,
+    }
+
+
+def _person_response(request: Request, db: Session, user: User, person_id: uuid.UUID):
+    ctx = _capacity_context(db, user)
+    person = next((p for p in ctx["people"] if p.user.id == person_id), None)
+    if person is None:
+        raise NotFound("User not found")
+    return render(request, "partials/person_card.html", p=person, **ctx)
+
+
 @router.get("/team")
+def team_capacity(request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Team capacity: assignments grouped per person (ops/admin)."""
+    return render(request, "team_capacity.html", nav="team", **_capacity_context(db, user))
+
+
+@router.post("/team/people/{person_id}/allocate")
+def team_allocate(person_id: uuid.UUID, request: Request, engagement_id: str = Form(""), role: str = Form(""),
+                  db: Session = Depends(get_db), user: User = Depends(current_user)):
+    eid = _uuid(engagement_id)
+    if eid is None:
+        raise ValidationError("Pick an engagement")
+    membership_service.assign_member(db, user, eid, user_id=person_id, role=role)
+    db.commit()
+    if is_htmx(request):
+        return _person_response(request, db, user, person_id)
+    return _back("/team")
+
+
+@router.get("/team/engagements")
 def team_overview(request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)):
     require_ops_or_admin(user)
     engagements = engagement_service.list_visible_engagements(db, user)
@@ -251,12 +299,15 @@ def team_overview(request: Request, db: Session = Depends(get_db), user: User = 
 
 @router.post("/engagements/{engagement_id}/members")
 def member_assign(engagement_id: uuid.UUID, request: Request, user_id: str = Form(""), role: str = Form(""),
-                  compact: bool = Form(False), db: Session = Depends(get_db), user: User = Depends(current_user)):
+                  compact: bool = Form(False), panel: str = Form(""), db: Session = Depends(get_db),
+                  user: User = Depends(current_user)):
     uid = _uuid(user_id)
     if uid is None:
         raise ValidationError("Pick someone to assign")
     membership_service.assign_member(db, user, engagement_id, user_id=uid, role=role)
     db.commit()
+    if is_htmx(request) and panel == "person":
+        return _person_response(request, db, user, uid)
     if is_htmx(request):
         return _team_response(request, db, user, engagement_id, compact)
     return _back(f"/engagements/{engagement_id}")
@@ -264,9 +315,12 @@ def member_assign(engagement_id: uuid.UUID, request: Request, user_id: str = For
 
 @router.post("/engagements/{engagement_id}/members/{member_user_id}/remove")
 def member_remove(engagement_id: uuid.UUID, member_user_id: uuid.UUID, request: Request,
-                  compact: bool = Form(False), db: Session = Depends(get_db), user: User = Depends(current_user)):
+                  compact: bool = Form(False), panel: str = Form(""), db: Session = Depends(get_db),
+                  user: User = Depends(current_user)):
     membership_service.remove_member(db, user, engagement_id, user_id=member_user_id)
     db.commit()
+    if is_htmx(request) and panel == "person":
+        return _person_response(request, db, user, member_user_id)
     if is_htmx(request):
         return _team_response(request, db, user, engagement_id, compact)
     return _back(f"/engagements/{engagement_id}")
@@ -318,6 +372,36 @@ def deliverable_pipeline(deliverable_id: uuid.UUID, request: Request, pipeline_s
     return _back(f"/deliverables/{deliverable_id}")
 
 
+@router.get("/engagements/{engagement_id}/deliverables-panel")
+def deliverables_panel(engagement_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
+                       user: User = Depends(current_user)):
+    engagement = get_visible_engagement(db, user, engagement_id)
+    return render(request, "partials/deliverables_panel.html", **_engagement_context(db, user, engagement))
+
+
+def _chat_response(request: Request, db: Session, user: User, deliverable_id: uuid.UUID, **headers):
+    d = get_visible_deliverable(db, user, deliverable_id)
+    activity = list(reversed(deliverable_service.list_activity(db, d.id)))  # oldest first, chat-style
+    resp = render(request, "partials/chat.html", d=d, activity=activity)
+    resp.headers.update(headers)
+    return resp
+
+
+@router.get("/deliverables/{deliverable_id}/chat")
+def deliverable_chat(deliverable_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
+                     user: User = Depends(current_user)):
+    return _chat_response(request, db, user, deliverable_id)
+
+
+@router.post("/deliverables/{deliverable_id}/chat")
+def deliverable_chat_post(deliverable_id: uuid.UUID, request: Request, body: str = Form(""),
+                          db: Session = Depends(get_db), user: User = Depends(current_user)):
+    deliverable_service.add_note(db, user, deliverable_id, body=body)
+    db.commit()
+    # notesChanged makes the engagement page refresh its comment counts.
+    return _chat_response(request, db, user, deliverable_id, **{"HX-Trigger": "notesChanged"})
+
+
 @router.get("/deliverables/{deliverable_id}")
 def deliverable_detail(deliverable_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
                        user: User = Depends(current_user)):
@@ -325,12 +409,18 @@ def deliverable_detail(deliverable_id: uuid.UUID, request: Request, db: Session 
     engagement = d.engagement
     blockers = deliverable_service.blocker_map(db, [d.id])[d.id]
     child_blockers = deliverable_service.blocker_map(db, [c.id for c in d.children])
+    dep_state = deliverable_service.derive_dep_state(d, blockers)
+
+    def child_signal(c):
+        return deliverable_service.derive_dep_signal(c, deliverable_service.derive_dep_state(c, child_blockers[c.id]),
+                                                     child_blockers[c.id])
+
     return render(
         request, "deliverable_detail.html", nav=f"board:{engagement.type_key}", d=d, engagement=engagement,
         kind=next(k for k in deliverable_service.kinds_for_type(db, engagement.type_key) if k.kind == d.kind),
-        dep_state=deliverable_service.derive_dep_state(d, blockers), blockers=blockers,
+        dep_state=dep_state, signal=deliverable_service.derive_dep_signal(d, dep_state, blockers), blockers=blockers,
         blocking=deliverable_service.blocking_list(db, d.id),
-        children=[(c, deliverable_service.derive_dep_state(c, child_blockers[c.id])) for c in d.children],
+        children=[(c, child_signal(c)) for c in d.children],
         child_kind=next((k for k in deliverable_service.kinds_for_type(db, engagement.type_key)
                          if k.parent_kind == d.kind), None),
         candidates=deliverable_service.blocker_candidates(db, d),

@@ -80,9 +80,12 @@ CREATE UNIQUE INDEX uq_engagement_memberships_one_owner ON engagement_membership
 
 **Permission model** (internal users):
 - **Read** an engagement and its deliverables: any membership role, or `ops`/`admin`.
-- **Edit** deliverables and move stage/status: `owner` or `collaborator` membership, or `ops`/`admin`. `viewer` is read-only.
+- **Edit** deliverables and move stage/status: `owner` or `collaborator` membership, or `ops`/`admin`. `viewer` is read-only, except for commenting.
+- **Comment** (internal notes in `deliverable_activity`): anyone who can see the deliverable, `viewer` included. Commenting is low-stakes, the same reasoning as the portal's comment threads.
 - **Create** clients and engagements, add aliases/contacts, and **manage memberships**: `ops`/`admin` only.
 - A user with no visibility gets a 404, never a 403, so an engagement's existence doesn't leak; a `viewer` attempting an edit gets a 403.
+
+**Team capacity view** (ops/admin): assignments grouped per person, used to judge who has room for more work, with allocation (granting memberships) done from the same screen. Load is built only from data that exists: memberships on open (`active`/`paused`) engagements, plus each person's open assigned deliverables (count, summed `hours_estimated`, overdue and due within 14 days by `target_date`). It's planned work, not logged time; once `time_entries` exist, actual hours can sit alongside it.
 
 > Note: `users.llm_content_default` as a flat boolean was an intermediate design, **superseded** by the per-kind `llm_content_preferences` table below. Do not implement the flat column.
 
@@ -229,6 +232,12 @@ CREATE TABLE deliverable_blockers (
 - `clear` — everything else.
 
 Blocker edges only connect deliverables on the same engagement.
+
+**How loudly `dep_state` is shown** (display rule, derived, never stored). Sequencing isn't urgency, so `waiting` splits by whether the waiting item has started:
+- `blocked` → loud (red): a human flagged it.
+- `maybe_unblocked` → a yellow "check block flag" prompt.
+- `waiting` on an item that is already in progress → amber: work started but is held up.
+- `waiting` on an item still `not_started` → quiet grey "after X": ordinary planned order, nothing to act on yet. It does not count towards "needs attention".
 
 ```sql
 CREATE TABLE deliverable_activity (
@@ -638,7 +647,15 @@ The reference tool's one-invariant-per-file convention (filename = the pinned co
 
 Every v1 design item was settled as of 2026-09-24. This section holds whatever surfaces once development starts (a real design question always turns up mid-build that this document didn't anticipate). When that happens: add it here, work through it the same way as everything above, fold the resolution into §2/§3, and log the reasoning in §6 — the same loop this whole document was built from.
 
-**None open.** The six items surfaced during the PoC build (2026-09-24) were all resolved the same day and folded into §2/§3 — see §6.
+The six items surfaced during the PoC build (2026-09-24) were all resolved the same day and folded into §2/§3 — see §6.
+
+**Raised 2026-09-24 (post-PoC iteration), awaiting Erwin's decisions — not built yet:**
+
+1. **Concurrent stages for some engagement types.** A single `engagements.stage` pointer (and the linear stepper) implies strict sequence, which doesn't match migration work, where modeling and dashboarding run in tandem (the same reasoning that removed gates). *Proposal:* a per-type `engagement_types.stage_mode` (`sequential` | `concurrent`). Sequential types (QuickStart) keep `engagements.stage`. Concurrent types hold a set of active stages instead (an `engagement_active_stages` table), so the board shows the card in every active column and the stepper highlights several stages. Events become `stage_entered` / `stage_exited`, and the rules engine's `stage_age` reads per stage from those events. *Open sub-question:* migration's Phase deliverables currently mirror its stage vocabulary one-to-one, which is a second source of truth for "where are we". An alternative is to derive a concurrent type's active stages from its in-progress Phase deliverables and drop manual stage moves for that type.
+2. **Portal slice for the PoC: which deliverables externals see, and how they log in.** Most of this is already designed (portal section: `viewer_scope`, `deliverable_comments`, the visibility predicate, invite-only accounts). Three things are new or unresolved. *Proposals:*
+   - (a) **Kind-level client visibility.** A `deliverable_kinds.client_visible` boolean: migration dashboard/tile visible, phase/milestone internal-only. A type with no client-visible kinds has no client tab or portal (QuickStart, for now). This narrows §3's "externals see the engagement's deliverables" to "externals see the engagement's *client-visible* deliverables".
+   - (b) **Demo login for externals.** A demo user logs in through the passcode-gated demo login. The magic-link email flow waits until an email provider is chosen.
+   - (c) **Structural separation.** Externals get their own `/portal` routes and templates, never the internal pages behind a flag. Internal users see two clearly separated comms channels per deliverable (internal notes vs. client thread); externals see only the client thread.
 
 ---
 
@@ -672,3 +689,9 @@ Dated entries for traceability — why something is the way it is, in case it's 
 - **`dep_state` definitions confirmed (2026-09-24)**: §3 had named the four states without defining them. The PoC's definitions (blocked / maybe_unblocked / waiting / clear, built from the manual flag plus blocker edges, "finished" = done or N/A) were confirmed by Erwin as-is and folded into §3 Deliverables. The load-bearing choice is that `maybe_unblocked` never auto-clears the manual flag — the same "explicit human decision" principle as elsewhere.
 - **Gate stages removed entirely (2026-09-24)**: the migration vocab drafted from the reference tool flagged `semantic_parity` as a `"gate": true` stage (don't start dashboards until the semantic layer matches the old tool). Erwin rejected the concept outright, not just its enforcement: in real projects modeling and dashboarding happen in tandem, and a gate reinforces the wrong expectation that one must wait for the other. The flag is gone from the vocab, the schema and the UI; this supersedes the "including the semantic-layer-parity gate" wording in the vocab-drafting entry above. Stages describe where an engagement is, never what work is allowed.
 - **PoC provisional answers signed off (2026-09-24)**: the three remaining PoC-surfaced items were confirmed by Erwin as implemented. (1) `deliverable_kinds.parent_kind` is the mechanism for the ≤2-level trees (§3 Deliverables). (2) The permission model: ops/admin create clients/engagements and manage memberships; owner/collaborator (or ops/admin) edit deliverables and stages; viewer is read-only; invisible means 404 (§3 Identity & access). (3) The passcode-gated demo login stays as the way to demo seeded users until admin impersonation exists (§2 row 16). §5 is empty again.
+- **Post-PoC iteration, first round (2026-09-24)**, at Erwin's request:
+  - Portfolio hides completed/cancelled engagements by default.
+  - A per-person **Team capacity** view lets ops/admin judge bandwidth and allocate people to engagements from one screen.
+  - Every deliverable on the engagement page is collapsible, and finished ones start collapsed.
+  - A per-deliverable **chat pop-up** shows its activity log and takes quick comments. Commenting was opened to `viewer` memberships, since commenting is low-stakes; editing still needs owner/collaborator.
+  - The dependency display was toned down. Erwin found "waiting" too loud when the dependent work hadn't even started (a milestone after a previous milestone is just planned order). `dep_state` itself is unchanged; the display rule in §3 now makes unstarted sequencing quiet, and it no longer counts as needing attention.

@@ -84,10 +84,11 @@ uv run pytest                          # uses TEST_DATABASE_URL, default .../csm
 Sign in at `/demo-login` as **Morgan Ellis (admin)**.
 
 1. **Managing projects.** On Portfolio, click **+ Add Client**, then **+ Add Engagement**. The type picker shows both stage vocabularies and deliverable structures. On the new engagement, use **+ Add Phase**, then **+ Milestone** under it. Asking for a milestone with no phase, or a tile under a phase, shows the server's refusal inline. Open a deliverable to add a dependency (Waits on…) or flag it blocked.
-2. **Assigning people.** Open **Team assignment**. *Harbor & Pine Power BI → Omni Migration* is highlighted as having no team. Assign someone as owner. The same panel sits on every engagement page.
+2. **Assigning people.** Open **Team**. **By person** shows each analyst's and contractor's load (owned/collaborating engagements, open items, estimated open hours, overdue). Allocate someone to an engagement from their card. **By engagement** highlights *Harbor & Pine Power BI → Omni Migration* as having no team. The same panel sits on every engagement page.
 3. **Two different engagement types.** The **QuickStart board** has 8 stage columns and the **Migration board** has 6. Open *Northwind QuickStart — 2026* (a flat curriculum list), then *Bluefin Tableau → Omni Migration* (two trees: Phases → Milestones and Dashboards → Tiles, with rollups). Bluefin's *Denial rate by payer* shows **Blocked**, *Bed occupancy trend* shows **Maybe unblocked**, and *Parity sign-off* shows **Waiting**. All three are derived from blocker edges plus the manual flag.
 4. **Access control.** Sign out and sign in as **Aisha Bello (analyst)**. She sees Cobalt's Migration but not Cobalt's QuickStart on the same client, and gets a 404 on anything else. If you assigned her to Harbor & Pine in step 2, it shows up now.
-5. **The spine.** Every step above shows up in **Event log** (admin/ops), in the same transaction as the write.
+5. **Working a deliverable.** On an engagement page, finished items start collapsed. The 💬 button on any deliverable opens its activity log and lets you comment without leaving the page. Items that simply come after unfinished work show a quiet "after X"; only blocks and held-up in-progress work are flagged loudly.
+6. **The spine.** Every step above shows up in **Event log** (admin/ops), in the same transaction as the write.
 
 Seeded users (all fictional): Morgan Ellis (admin); Priya Raman, Tomás Alvarez, Aisha Bello (analysts); Jordan Kim (contractor).
 

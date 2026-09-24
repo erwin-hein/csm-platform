@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Team capacity{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% set tab = "people" %}{% include "partials/team_tabs.html" %}
+<p class="small muted" style="margin-top:-8px">Load counts open engagements (active or paused) and each person's open assigned deliverables. The bar compares estimated open hours across the team; it's planned work, not logged time.</p>
+<div class="grid people-grid">
+  {% for p in people %}{% include "partials/person_card.html" %}{% endfor %}
+</div>
+{% endblock %}

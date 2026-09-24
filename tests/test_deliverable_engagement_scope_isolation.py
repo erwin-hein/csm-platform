@@ -57,7 +57,8 @@ def test_http_non_member_gets_404_everywhere(http, db, setup):
     eid = w.alice_eng.id
 
     for path in (f"/engagements/{eid}", f"/deliverables/{milestone.id}", f"/deliverables/{phase.id}",
-                 f"/engagements/{eid}/deliverables/new"):
+                 f"/engagements/{eid}/deliverables/new", f"/engagements/{eid}/deliverables-panel",
+                 f"/deliverables/{milestone.id}/chat"):
         assert bob.get(path).status_code == 404, path
 
     before = _event_count(db)
@@ -69,6 +70,7 @@ def test_http_non_member_gets_404_everywhere(http, db, setup):
         (f"/deliverables/{milestone.id}/edit", {"name": "Renamed"}),
         (f"/deliverables/{milestone.id}/block", {"blocked": "true", "blocked_reason": "x"}),
         (f"/deliverables/{milestone.id}/notes", {"body": "hello"}),
+        (f"/deliverables/{milestone.id}/chat", {"body": "hello"}),
         (f"/deliverables/{milestone.id}/blockers", {"blocker_id": str(phase.id)}),
     ]
     for path, data in posts:
@@ -103,6 +105,9 @@ def test_viewer_can_see_but_not_edit(http, db, setup):
     assert r.status_code == 403
     with pytest.raises(Forbidden):
         deliverables.update_deliverable(db, w.bob, milestone.id, pipeline_status="done")
+    # ...but commenting only needs visibility, so a viewer can use the chat pop-up.
+    r = bob.post(f"/deliverables/{milestone.id}/chat", data={"body": "viewer note"}, headers={"hx-request": "true"})
+    assert r.status_code == 200 and "viewer note" in r.text and r.headers["hx-trigger"] == "notesChanged"
 
 
 def test_membership_revocation_removes_access(http, db, setup):

@@ -14,6 +14,10 @@
   <div class="row"><a class="btn primary" href="/clients/new">+ Add Client</a><a class="btn" href="/engagements/new">+ Add Engagement</a></div>
   {% endif %}
 </div>
+<div class="small muted" style="margin:-8px 0 16px">
+  {% if show_closed %}Showing completed and cancelled engagements. <a href="/">Hide them</a>
+  {% elif hidden_total %}{{ hidden_total }} completed/cancelled engagement{{ 's' if hidden_total != 1 }} hidden. <a href="/?show_closed=true">Show</a>{% endif %}
+</div>
 
 {% for client in clients %}
 <section class="client-block">
@@ -33,7 +37,7 @@
       <div class="small">{% if e.owner %}{{ e.owner.label }}{% else %}<span class="warn-tag">No owner</span>{% endif %}</div>
     </div>
     {% else %}
-    <div class="empty">No engagements yet.</div>
+    <div class="empty">{% if hidden[client.id] %}No open engagements ({{ hidden[client.id] }} completed/cancelled hidden).{% else %}No engagements yet.{% endif %}</div>
     {% endfor %}
   </div>
 </section>

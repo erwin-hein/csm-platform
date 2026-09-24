@@ -1,0 +1,30 @@
+{# Deliverable activity + internal comments, shown in the engagement page's pop-up. #}
+<div class="chat-head">
+  <div>
+    <div class="small muted">{{ d.kind | capitalize }} · {{ PIPELINE_LABELS[d.pipeline_status] }}</div>
+    <h2 style="margin:2px 0 0">{{ d.name }}</h2>
+  </div>
+  <div class="row" style="gap:8px">
+    <a class="btn small" href="/deliverables/{{ d.id }}">Open full page</a>
+    <form method="dialog" class="inline"><button class="btn small" type="submit" aria-label="Close">✕</button></form>
+  </div>
+</div>
+<div class="chat-scope small">Internal only · never visible to clients</div>
+<ol class="chat-log" id="chat-log">
+  {% for a in activity %}
+    {% if a.kind == 'note' %}
+    <li class="chat-msg {{ 'mine' if a.actor_user_id == user.id }}">
+      <div class="chat-meta"><b>{{ a.actor.label if a.actor else 'System' }}</b> · {{ a.created_at.strftime('%b %d, %H:%M') }}</div>
+      <div class="chat-bubble">{{ a.body }}</div>
+    </li>
+    {% else %}
+    <li class="chat-event"><span>{{ a.actor.label if a.actor else 'System' }}: {{ a.body }}</span> <span class="muted">· {{ a.created_at.strftime('%b %d, %H:%M') }}</span></li>
+    {% endif %}
+  {% else %}<li class="chat-event muted">No activity yet.</li>{% endfor %}
+</ol>
+<form class="chat-form" hx-post="/deliverables/{{ d.id }}/chat" hx-target="#chat-dialog-body" hx-swap="innerHTML">
+  <textarea name="body" placeholder="Add an internal comment…" required
+            onkeydown="if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){this.form.requestSubmit()}"></textarea>
+  <div class="spread"><span class="small muted">⌘/Ctrl + Enter to send</span><button class="btn primary small" type="submit">Comment</button></div>
+</form>
+<script>(function(){const l=document.getElementById('chat-log'); if(l) l.scrollTop=l.scrollHeight;})();</script>

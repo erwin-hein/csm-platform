@@ -8,14 +8,6 @@ from app.services.deliverables import PIPELINE_LABELS
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
 templates.env.globals["PIPELINE_LABELS"] = PIPELINE_LABELS
 
-DEP_STATE_LABELS = {
-    "blocked": "Blocked",
-    "waiting": "Waiting on dependency",
-    "maybe_unblocked": "Maybe unblocked",
-    "clear": "Clear",
-}
-templates.env.globals["DEP_STATE_LABELS"] = DEP_STATE_LABELS
-
 
 def is_htmx(request: Request) -> bool:
     return request.headers.get("hx-request") == "true"

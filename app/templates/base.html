@@ -6,6 +6,7 @@
   <title>{% block title %}Engagements{% endblock %} · Shearwater</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body hx-boost="true">
 {% if user %}
@@ -17,7 +18,7 @@
     <a href="/board/{{ key }}" class="{{ 'active' if nav == 'board:' ~ key }}">{{ label }} board</a>
     {% endfor %}
     {% if user.bypasses_membership %}
-    <a href="/team" class="{{ 'active' if nav == 'team' }}">Team assignment</a>
+    <a href="/team" class="{{ 'active' if nav == 'team' }}">Team</a>
     <a href="/events" class="{{ 'active' if nav == 'events' }}">Event log</a>
     {% endif %}
   </nav>

@@ -10,11 +10,12 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.access import (
     can_see_engagement,
+    get_visible_deliverable,
     get_editable_deliverable,
     get_editable_engagement,
 )
@@ -61,6 +62,34 @@ def derive_dep_state(deliverable: Deliverable, blockers: list[Deliverable]) -> s
     return DEP_CLEAR
 
 
+@dataclass(frozen=True)
+class DepSignal:
+    """How loudly to show a dep_state (CLAUDE.md §3). Sequencing isn't urgency: an item
+    that waits on unfinished work but hasn't started is just ordered after it."""
+
+    level: str   # 'alert' (red) | 'check' (yellow) | 'warn' (amber) | 'info' (grey, quiet)
+    label: str
+    detail: str
+
+    @property
+    def needs_attention(self) -> bool:
+        return self.level != "info"
+
+
+def derive_dep_signal(deliverable: Deliverable, dep_state: str, blockers: list[Deliverable]) -> DepSignal | None:
+    open_names = ", ".join(b.name for b in blockers if not _resolved(b))
+    if dep_state == DEP_BLOCKED:
+        return DepSignal("alert", "Blocked", deliverable.blocked_reason or "Flagged blocked")
+    if dep_state == DEP_MAYBE_UNBLOCKED:
+        return DepSignal("check", "Check block flag",
+                         f"Still flagged blocked, but everything it waits on is finished ({deliverable.blocked_reason})")
+    if dep_state == DEP_WAITING:
+        if deliverable.pipeline_status == "not_started":
+            return DepSignal("info", f"After {open_names}", f"Scheduled after {open_names}")
+        return DepSignal("warn", "Waiting on dependency", f"Work has started, but it still waits on {open_names}")
+    return None
+
+
 # ---------------------------------------------------------------- reads
 
 
@@ -103,20 +132,20 @@ class Progress:
     done: int = 0
     applicable: int = 0
     by_status: dict[str, int] = field(default_factory=lambda: {s: 0 for s in PIPELINE_STATUSES})
-    attention: int = 0  # blocked or waiting
+    attention: int = 0  # items whose dependency signal needs attention (not quiet sequencing)
 
     @property
     def pct(self) -> int:
         return round(100 * self.done / self.applicable) if self.applicable else 0
 
-    def add(self, d: Deliverable, dep_state: str) -> None:
+    def add(self, d: Deliverable, signal: "DepSignal | None") -> None:
         if d.not_applicable:
             return
         self.applicable += 1
         self.by_status[d.pipeline_status] += 1
         if d.pipeline_status == "done":
             self.done += 1
-        if dep_state in (DEP_BLOCKED, DEP_WAITING, DEP_MAYBE_UNBLOCKED):
+        if signal and signal.needs_attention:
             self.attention += 1
 
 
@@ -125,6 +154,8 @@ class Node:
     deliverable: Deliverable
     dep_state: str
     blockers: list[Deliverable]
+    signal: DepSignal | None = None
+    note_count: int = 0
     children: list["Node"] = field(default_factory=list)
     progress: Progress = field(default_factory=Progress)  # over children, for parent nodes
 
@@ -150,12 +181,16 @@ def engagement_tree(db: Session, engagement: Engagement) -> EngagementTree:
         select(Deliverable).where(Deliverable.engagement_id == engagement.id).order_by(Deliverable.created_at)
     ))
     blockers = blocker_map(db, [d.id for d in items])
-    nodes = {d.id: Node(d, derive_dep_state(d, blockers[d.id]), blockers[d.id]) for d in items}
+    notes = get_note_counts(db, [d.id for d in items])
+    nodes = {}
+    for d in items:
+        state = derive_dep_state(d, blockers[d.id])
+        nodes[d.id] = Node(d, state, blockers[d.id], derive_dep_signal(d, state, blockers[d.id]), notes.get(d.id, 0))
     for node in nodes.values():
         parent_id = node.deliverable.parent_id
         if parent_id in nodes:
             nodes[parent_id].children.append(node)
-            nodes[parent_id].progress.add(node.deliverable, node.dep_state)
+            nodes[parent_id].progress.add(node.deliverable, node.signal)
 
     kinds = kinds_for_type(db, engagement.type_key)
     overall = Progress()
@@ -167,8 +202,8 @@ def engagement_tree(db: Session, engagement: Engagement) -> EngagementTree:
         for root in roots:
             leaves = root.children if child_kind else [root]
             for leaf in leaves or [root]:
-                section_progress.add(leaf.deliverable, leaf.dep_state)
-                overall.add(leaf.deliverable, leaf.dep_state)
+                section_progress.add(leaf.deliverable, leaf.signal)
+                overall.add(leaf.deliverable, leaf.signal)
         sections.append(Section(kind, child_kind, roots, section_progress))
     # Sections appear in the order the engagement's work was first laid out; empty ones last.
     sections.sort(key=lambda s: (not s.nodes, s.nodes[0].deliverable.created_at if s.nodes else None, s.kind.kind))
@@ -177,6 +212,17 @@ def engagement_tree(db: Session, engagement: Engagement) -> EngagementTree:
 
 def engagement_progress(db: Session, engagement: Engagement) -> Progress:
     return engagement_tree(db, engagement).progress
+
+
+def get_note_counts(db: Session, deliverable_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    if not deliverable_ids:
+        return {}
+    rows = db.execute(
+        select(DeliverableActivity.deliverable_id, func.count())
+        .where(DeliverableActivity.deliverable_id.in_(deliverable_ids), DeliverableActivity.kind == "note")
+        .group_by(DeliverableActivity.deliverable_id)
+    )
+    return dict(rows.all())
 
 
 def list_activity(db: Session, deliverable_id: uuid.UUID) -> list[DeliverableActivity]:
@@ -370,8 +416,9 @@ def update_deliverable(db: Session, actor: User, deliverable_id: uuid.UUID, *, n
 
 @mutation("deliverable_note_added")
 def add_note(db: Session, actor: User, deliverable_id: uuid.UUID, *, body: str) -> DeliverableActivity:
-    """Internal commentary. deliverable_activity is never client-visible (CLAUDE.md §3 Portal)."""
-    d = get_editable_deliverable(db, actor, deliverable_id)
+    """Internal commentary. Anyone who can see the deliverable can comment, viewers included;
+    deliverable_activity is never client-visible (CLAUDE.md §3 Portal)."""
+    d = get_visible_deliverable(db, actor, deliverable_id)
     body = body.strip()
     if not body:
         raise ValidationError("Note can't be empty")

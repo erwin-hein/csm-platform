@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% from "macros.html" import status_pill, dep_pill, type_badge, initials %}
+{% from "macros.html" import status_pill, dep_signal, type_badge, initials %}
 {% block title %}{{ d.name }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/">Portfolio</a> › <a href="/clients/{{ engagement.client.id }}">{{ engagement.client.name }}</a> ›
   <a href="/engagements/{{ engagement.id }}">{{ engagement.name }}</a> ›{% if d.parent %} <a href="/deliverables/{{ d.parent.id }}">{{ d.parent.name }}</a> ›{% endif %}</div>
 <div class="spread" style="margin-bottom:14px">
   <div><h1>{{ d.name }}</h1>
-    <div class="row">{{ type_badge(engagement.type) }} <span class="role-chip"><b>{{ kind.display_name }}</b></span> {{ status_pill(d.pipeline_status) }} {{ dep_pill(dep_state) }}
+    <div class="row">{{ type_badge(engagement.type) }} <span class="role-chip"><b>{{ kind.display_name }}</b></span> {{ status_pill(d.pipeline_status) }} {{ dep_signal(signal) }}
       {% if d.not_applicable %}<span class="status-badge">not applicable</span>{% endif %}</div></div>
 </div>
 
@@ -23,12 +23,13 @@
 
     <div class="card">
       <h2>Dependencies</h2>
-      <div class="dep-box {{ dep_state }}">
-        <b>{{ DEP_STATE_LABELS[dep_state] }}</b> <span class="small muted">— derived from the manual block flag and the blockers below, never stored.</span>
+      <div class="dep-box {{ 'lvl-' ~ signal.level if signal else '' }}">
+        <b>{{ signal.label if signal else 'Clear' }}</b> <span class="small muted">— derived from the manual block flag and the blockers below, never stored.</span>
         <div class="small" style="margin-top:4px">
           {% if dep_state == 'blocked' %}Flagged blocked: “{{ d.blocked_reason }}”{% if blockers %} — and still waiting on unfinished work.{% endif %}
           {% elif dep_state == 'maybe_unblocked' %}Flagged blocked (“{{ d.blocked_reason }}”), but everything it waits on is now done. The flag may be stale — clear it if so.
-          {% elif dep_state == 'waiting' %}Not flagged, but waiting on unfinished work below.
+          {% elif dep_state == 'waiting' and signal.level == 'info' %}Planned after unfinished work below. Nothing to act on until this one starts.
+          {% elif dep_state == 'waiting' %}Work has started, but it still waits on unfinished work below.
           {% else %}Nothing is holding this up.{% endif %}
         </div>
       </div>
@@ -76,7 +77,7 @@
         {% if can_edit %}<a class="btn small" href="/engagements/{{ engagement.id }}/deliverables/new?kind={{ child_kind.kind }}&parent_id={{ d.id }}">+ Add {{ child_kind.display_name }}</a>{% endif %}</div>
       <table>
         {% for c, st in children %}
-        <tr class="{{ 'na' if c.not_applicable }}"><td><a href="/deliverables/{{ c.id }}">{{ c.name }}</a> {{ dep_pill(st) }}</td><td style="width:180px">{{ status_pill(c.pipeline_status) }}</td></tr>
+        <tr class="{{ 'na' if c.not_applicable }}"><td><a href="/deliverables/{{ c.id }}">{{ c.name }}</a> {{ dep_signal(st) }}</td><td style="width:180px">{{ status_pill(c.pipeline_status) }}</td></tr>
         {% else %}<tr><td class="empty">None yet.</td></tr>{% endfor %}
       </table>
     </div>
@@ -84,12 +85,11 @@
 
     <div class="card">
       <h2>Activity <span class="small muted" style="font-weight:400">— internal only</span></h2>
-      {% if can_edit %}
-      <form method="post" action="/deliverables/{{ d.id }}/notes" style="margin-bottom:10px">
+            <form method="post" action="/deliverables/{{ d.id }}/notes" style="margin-bottom:10px">
         <textarea name="body" placeholder="Add an internal note…" required></textarea>
         <button class="btn small" type="submit" style="margin-top:6px">Add note</button>
       </form>
-      {% endif %}
+      
       <ul class="activity">
         {% for a in activity %}
         <li><div class="small"><b>{{ a.actor.label if a.actor else 'System' }}</b> <span class="muted">· {{ a.kind | replace('_', ' ') }} · {{ a.created_at.strftime('%b %d, %H:%M') }}</span></div>
