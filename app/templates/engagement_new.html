@@ -16,7 +16,7 @@
       {% for t in types %}
       <label class="{{ t.key }}"><input type="radio" name="type_key" value="{{ t.key }}" required {{ 'checked' if loop.first }}><b>{{ t.display_name }}</b>
         <div class="small muted" style="margin-top:6px">Stages</div>
-        <ol>{% for s in t.stage_vocab %}<li>{{ s.label }}{% if s.gate %} <span class="gate-mark">GATE</span>{% endif %}</li>{% endfor %}</ol>
+        <ol>{% for s in t.stage_vocab %}<li>{{ s.label }}</li>{% endfor %}</ol>
         <div class="small muted" style="margin-top:6px">Deliverables</div>
         <ul class="small" style="margin:4px 0 0; padding-left:18px">{% for k in kinds[t.key] %}<li>{{ k.display_name }}{% if k.parent_kind %} <span class="muted">(under {{ k.parent_kind }})</span>{% endif %}</li>{% endfor %}</ul>
       </label>
