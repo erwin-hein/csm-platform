@@ -17,7 +17,7 @@ underneath. None of the integrations, LLM features, portal, rules engine or dige
 | Auth | `app/web/auth.py`. Google OAuth limited to `@shearwaterdata.com` (checked server-side), `ADMIN_EMAILS` bootstrap, signed httponly session cookie. `app/web/csrf.py` does the Origin/Referer check |
 | Seed data | `app/seed.py`. Runs through the real service functions, so seeded rows emit events too |
 | Tests | `tests/`. One invariant per file |
-| Deploy / local run | `render.yaml` (Blueprint), `scripts/start.sh`, `Dockerfile` and `docker-compose.yml` |
+| Deploy / local run / CI | `render.yaml` (Blueprint), `scripts/start.sh`, `Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml` (tests on every push; publishes the image on merge to `main`) |
 
 ## Running locally
 
@@ -39,7 +39,9 @@ The first start migrates the database and seeds the demo data. Restarts keep you
 - **Stop:** Ctrl+C, or `docker compose down`.
 - **Start over with fresh demo data:** `docker compose down -v` (deletes the database volume), then `docker compose up`.
 - **Pick up code changes:** `git pull`, then `docker compose up --build`.
+- **Skip the local build:** every merge to `main` publishes a tested image to `ghcr.io/erwin-hein/csm-platform:latest` (see `.github/workflows/ci.yml`). Run `docker compose pull web && docker compose up` to use it. If the package is private, first run `docker login ghcr.io -u <github-username>` with a personal access token that has the `read:packages` scope. A plain `docker compose up` tries the published image first and falls back to building locally.
 - **Configuration:** none required. `docker-compose.yml` already holds every setting the demo needs. For the optional ones (`ADMIN_EMAILS`, Google OAuth), copy `.env.example` to `.env` and fill it in.
+- **"port is already allocated" / "address already in use"** means something else on your machine already has port 8000. Set `APP_PORT=8001` (or any free port) in `.env` and open `http://localhost:8001` instead.
 - **"no configuration file provided: not found"** means Docker can't see `docker-compose.yml` in the current folder. Run the command from the repo root, and make sure your checkout actually contains that file.
 
 ### Without Docker

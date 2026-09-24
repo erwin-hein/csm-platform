@@ -1,4 +1,6 @@
-# Local run: `docker compose up --build`, then open http://localhost:8000/demo-login (passcode: demo).
+# Local run, then open http://localhost:8000/demo-login (passcode: demo; port = APP_PORT if set):
+#   docker compose up --build              # build the image from your checkout
+#   docker compose pull web && docker compose up   # or use the image CI built from main
 services:
   db:
     image: postgres:16
@@ -15,12 +17,13 @@ services:
       retries: 30
 
   web:
+    image: ghcr.io/erwin-hein/csm-platform:latest   # published by .github/workflows/ci.yml on every merge to main
     build: .
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "${APP_PORT:-8000}:8000"         # host port; set APP_PORT in .env if 8000 is taken
     environment:
       DATABASE_URL: postgresql://csm:csm@db:5432/csm
       SECRET_KEY: local-dev-only-secret
