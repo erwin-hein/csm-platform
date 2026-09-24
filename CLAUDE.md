@@ -1,8 +1,8 @@
 # Corporate CSM/Engagement Platform — Living Architecture Spec
 
-Status: **design-in-progress**. This file is the source of truth for the rebuild being planned in conversation with Erwin (erwin@shearwaterdata.com). It supersedes anything said in chat — if chat and this file disagree, this file wins unless a chat message explicitly amends it (and this file should be updated in the same turn that happens).
+Status: **v1 design complete (2026-09-24) — entering development.** Every item that was tracked as Open (§5) is now resolved into §2/§3. This file remains the source of truth going forward, including during development — it supersedes anything said in chat, and any new design question that surfaces mid-build gets folded back in here the same way everything above was (see §5), never left to live only in a conversation or a commit message.
 
-**How to use this doc**: Section 2 is the settled foundation. Section 3 is the concrete schema — the actual source of truth for implementation. Section 4 is scope explicitly cut for v1 (not forgotten, just sequenced later). Section 5 is what's still undecided. Section 6 is a dated decision log for traceability ("why did we do it this way").
+**How to use this doc**: Section 2 is the settled foundation. Section 3 is the concrete schema — the actual source of truth for implementation. Section 4 is scope explicitly cut for v1 (not forgotten, just sequenced later). Section 5 tracks anything still undecided (empty at v1 completion, see above). Section 6 is a dated decision log for traceability ("why did we do it this way").
 
 ---
 
@@ -533,6 +533,33 @@ CREATE TABLE rule_firings (            -- cooldown tracking only — one row per
 - **`draft_nudge`** is just another `generated_content_kinds` entry (`entity_type='engagement'`), gated through the same `llm_content_preferences` cascade as everything else — except a rules-engine firing has no acting user to resolve opt-in against. **Resolved against the engagement's owner's preference** — they're the one who'd actually act on or send the nudge, so it's their opt-in that gates whether the system spends on their behalf.
 - **NL→YAML rule authoring** (an admin describes a rule in plain language, gets a schema-constrained draft) is an ungated admin utility, not routed through `llm_content_preferences` — rare, admin-only, not recurring per-engagement generation.
 
+### Templates/checklist engine
+
+Collapses to mostly just the generalized Deliverables engine again. Two of the reference tool's three template concerns don't apply here: **portal visibility seeding** is moot (the granular per-field toggle system was deferred entirely — portal is Deliverables-only); **default rules seeding** is moot (rules aren't instantiated per-engagement in our design, they're globally defined and `engagement_type_key`-scoped, applying automatically). What's left is checklist seeding, and a checklist item is structurally just a lightweight Deliverable:
+
+```sql
+CREATE TABLE deliverable_templates (
+  id UUID PRIMARY KEY,
+  engagement_type_key TEXT REFERENCES engagement_types(key),
+  trigger_event TEXT NOT NULL,     -- e.g. 'engagement_created' | 'stage_entered:kickoff' — app config vocab
+  items JSONB NOT NULL,            -- [{kind, name, priority, ...}] — the seed list
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Instantiation is another event-bus handler subscribed to `trigger_event` — creates the listed deliverables the first time the trigger fires for an engagement, idempotent (never re-creates items matched by existing kind+name). A template edited later (SOP evolves, a new item gets added) doesn't retroactively touch engagements automatically — a manual "sync to latest template" action lets an analyst/ops pull in just the new items, additive-only, never disturbing progress already made on existing ones.
+
+### Testing strategy
+
+The reference tool's one-invariant-per-file convention (filename = the pinned contract) carries over wholesale — stack-independent, genuinely good practice. What's new or changed for this design specifically:
+
+- **Two populations now need scope-isolation tests, not one.** The reference tool only ever isolated internal analysts from each other. We also have `client_external` viewers with `viewer_scope='assigned_only'`, so every deliverable-touching feature needs both a `*_engagement_scope_isolation` test (an analyst without membership can't see/act on it) *and* a `*_portal_scope_isolation` test (a scoped client viewer can't see past their `client_owner_user_id`) — genuinely new territory, not something the old pattern already covers.
+- **A generation-cache test**: a second `POST .../generate` for the same entity+kind must return the cached row without a second LLM call (monkeypatched call-count assertion) — guards the cost-sharing mechanism from §3/§6 directly.
+- **An event-emission drift guard**: every mutating service function asserted to emit its corresponding `events` row — catches a future write path that isn't wired into the spine.
+- **Elevated stakes on XSS/sanitization tests**: bidirectional `deliverable_comments` means untrusted content now flows across the trust boundary in both directions (client → internal, internal → client), not one — treat as higher-priority than the reference tool's version, not a like-for-like port.
+- **Harvest dedupe tiers and meeting-matching precedence** port as direct regression tests — each one is a "paid for this bug once" incident, stack-independent.
+- **DB testing shape changes with Postgres**: no more SQLite temp-file-per-test — a shared test Postgres instance with each test wrapped in a rolled-back transaction is the standard replacement.
+
 ---
 
 ## 4. Explicitly deferred scope (real decisions, not gaps)
@@ -550,10 +577,7 @@ CREATE TABLE rule_firings (            -- cooldown tracking only — one row per
 
 ## 5. Open — not yet designed
 
-In rough dependency order (most foundational/highest downstream impact first, per the ordering principle used so far):
-
-1. **Templates/checklist engine** (kickoff checklists, portal visibility templates). **(Next up.)**
-2. **Testing strategy** — Hao's one-invariant-per-file pattern flagged as worth keeping conceptually; nothing concrete decided for the new stack yet.
+**None.** Every item is settled as of 2026-09-24 — this section is kept as a placeholder heading for whatever surfaces once actual development starts (a real design question always turns up mid-build that this document didn't anticipate). When that happens: add it here, work through it the same way as everything above, fold the resolution into §2/§3, and log the reasoning in §6 — the same loop this whole document was built from.
 
 ---
 
@@ -580,3 +604,5 @@ Dated entries for traceability — why something is the way it is, in case it's 
 - **`deliverables.assignee_user_id` split into two columns**: `internal_assignee_user_id` (who's doing the work) and `client_owner_user_id` (who owns client-side validation/sign-off) are independent and routinely both populated for the same deliverable — one column couldn't represent a dev/analyst and a client QA owner simultaneously. This also became the key for per-client-user portal visibility scoping (`engagement_memberships.viewer_scope`): a project lead sees everything in an engagement, while a client-side QA/analyst user sees only deliverables where they're the `client_owner_user_id` (plus ancestors, for context) — the client's own org structure, not something Shearwater imposes.
 - **Onboarding has no hard finish gate**: the reference tool required Fathom + LLM connected to finish, because its data model *was* the sync pipeline. Ours isn't — manual creation works standalone, and there's no per-user LLM credential to require anymore anyway (org-level key). Confirmed explicitly by Erwin rather than assumed: every integration is a recommended, dismissible nudge, never a blocker.
 - **`mark_at_risk` redesigned as an alert severity tag, not a health override**: the reference tool's rules engine could write directly to a manual health-override column; we don't have one, on purpose (health is fully derived). Confirmed with Erwin via a concrete walkthrough (an Acme Corp engagement seen by an Admin, an Ops user, and one assigned Analyst) that also surfaced two things worth stating explicitly rather than leaving implicit: (1) rules evaluate and cooldown per-Engagement, never per-viewer — visibility of the result is a separate, read-time concern; (2) most `generated_content` kinds are shared across every viewer who can see the entity by construction (`entity_type` in meeting/engagement/client), so a cache-check-before-generate rule in `POST .../generate` is what actually prevents three viewers from tripling LLM spend on the same meeting — only `internal_digest`/`weekly_digest` are genuinely personal and can't be shared. The walkthrough also exposed a real gap: a rules-engine-triggered `draft_nudge` has no acting user to resolve opt-in against, so it resolves against the engagement owner's preference instead.
+- **Templates engine collapsed from three concerns to one**: the reference tool's template engine seeded checklists, portal visibility, and default rules. Two of those turned out to be moot here as a direct consequence of earlier decisions — portal visibility toggles were deferred entirely, and rules are globally-defined/type-scoped rather than per-engagement, so neither needs seeding. Only checklist seeding survives, and it reuses the Deliverables engine rather than inventing a second entity type, since a checklist item is structurally just a lightweight deliverable.
+- **v1 design phase closed out (2026-09-24)**: every tracked Open item is resolved. §5 stays in the document as a live placeholder rather than being deleted, since a real design question always surfaces mid-build — the expectation going forward is that it gets added there, worked through the same way, and folded back into §2/§3/§6, not left to live only in a conversation or a commit message.
