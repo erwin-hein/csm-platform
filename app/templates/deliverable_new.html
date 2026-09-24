@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Add deliverable{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/">Portfolio</a> › <a href="/clients/{{ engagement.client.id }}">{{ engagement.client.name }}</a> › <a href="/engagements/{{ engagement.id }}">{{ engagement.name }}</a> ›</div>
+<h1>Add deliverable</h1>
+<p class="muted">Kinds are the ones a {{ engagement.type.display_name }} engagement allows. Child kinds must sit under their parent kind (max two levels).</p>
+<form class="card" method="post" action="/engagements/{{ engagement.id }}/deliverables" style="max-width: 640px">
+  <label class="field"><span>Kind</span>
+    <select name="kind" id="kind-select">
+      {% for k in kinds %}<option value="{{ k.kind }}" data-parent-kind="{{ k.parent_kind or '' }}" {{ 'selected' if k.kind == selected_kind }}>{{ k.display_name }}{% if k.parent_kind %} (under {{ k.parent_kind }}){% endif %}</option>{% endfor %}
+    </select></label>
+  <label class="field" id="parent-field"><span>Parent</span>
+    <select name="parent_id" id="parent-select">
+      <option value="">— none (top level) —</option>
+      {% for child_kind, options in parents.items() %}
+        {% for p in options %}<option value="{{ p.id }}" data-for-kind="{{ child_kind }}" {{ 'selected' if p.id|string == selected_parent }}>{{ p.kind | capitalize }}: {{ p.name }}</option>{% endfor %}
+      {% endfor %}
+    </select>
+    <div class="help">Required for child kinds, not allowed for top-level ones — enforced server-side.</div></label>
+  <label class="field"><span>Name</span><input type="text" name="name" required autofocus></label>
+  <div class="grid" style="grid-template-columns: 1fr 1fr">
+    <label class="field"><span>Internal assignee</span>
+      <select name="assignee_id"><option value="">— unassigned —</option>
+        {% for m in team %}<option value="{{ m.user_id }}">{{ m.user.label }} ({{ m.role }})</option>{% endfor %}</select>
+      <div class="help">Only people on the engagement's team.</div></label>
+    <label class="field"><span>Priority</span>
+      <select name="priority"><option value="">—</option>{% for p in priorities %}<option>{{ p }}</option>{% endfor %}</select></label>
+    <label class="field"><span>Target date</span><input type="date" name="target_date"></label>
+    <label class="field"><span>Hours estimated</span><input type="number" name="hours_estimated" step="0.25" min="0"></label>
+  </div>
+  {% if existing %}
+  <label class="field"><span>Waiting on (blockers)</span>
+    <select name="blocker_ids" multiple size="{{ [existing|length, 6]|min }}">
+      {% for x in existing %}<option value="{{ x.id }}">{{ x.kind | capitalize }}: {{ x.name }}</option>{% endfor %}
+    </select><div class="help">Optional. Ctrl/⌘-click for several.</div></label>
+  {% endif %}
+  <button class="btn primary" type="submit">Create deliverable</button>
+  <a class="btn" href="/engagements/{{ engagement.id }}">Cancel</a>
+</form>
+<script>
+  // Convenience only: show parents that fit the chosen kind. The server is the enforcement point.
+  (function () {
+    const kind = document.getElementById('kind-select'), parent = document.getElementById('parent-select');
+    function sync() {
+      const pk = kind.selectedOptions[0].dataset.parentKind;
+      document.getElementById('parent-field').style.display = pk ? '' : 'none';
+      for (const o of parent.options) { if (o.dataset.forKind) o.hidden = o.dataset.forKind !== kind.value; }
+      if (!pk) parent.value = '';
+      else if (parent.selectedOptions[0] && parent.selectedOptions[0].hidden) parent.value = '';
+    }
+    kind.addEventListener('change', sync); sync();
+  })();
+</script>
+{% endblock %}

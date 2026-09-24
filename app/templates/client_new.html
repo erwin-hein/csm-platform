@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Add client{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/">Portfolio</a> ›</div>
+<h1>Add client</h1>
+<p class="muted">A client is the stable org identity — name, domains, contacts. The work itself lives on its engagements.</p>
+<form class="card" method="post" action="/clients" style="max-width: 520px">
+  <label class="field"><span>Name</span><input type="text" name="name" required autofocus placeholder="e.g. Northwind Logistics"></label>
+  <label class="field"><span>Email domains</span><input type="text" name="domains" placeholder="northwind.com, northwind.co.uk">
+    <div class="help">Comma-separated. The inbound matching key once meeting sync exists.</div></label>
+  <button class="btn primary" type="submit">Create client</button>
+</form>
+{% endblock %}

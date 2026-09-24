@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% from "macros.html" import progress_bar, progress_text, kind_mix, eng_status %}
+{% block title %}{{ etype.display_name }} board{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<div class="spread" style="margin-bottom: 14px">
+  <div>
+    <h1>{{ etype.display_name }} board</h1>
+    <div class="muted small">Columns come from the <code>{{ etype.key }}</code> type's stage vocabulary ({{ etype.stage_vocab | length }} stages).
+      Deliverable kinds: {% for k in kinds %}<b>{{ k.display_name }}</b>{% if k.parent_kind %} (under {{ k.parent_kind }}){% endif %}{{ ', ' if not loop.last }}{% endfor %}.</div>
+  </div>
+  <div class="row">
+    <div class="type-tabs">{% for t in types %}<a class="{{ 'on' if t.key == etype.key }} {{ t.key }}" href="/board/{{ t.key }}">{{ t.display_name }}</a>{% endfor %}</div>
+    <a class="btn small" href="?show_closed={{ 'false' if show_closed else 'true' }}">{{ 'Hide' if show_closed else 'Show' }} completed/cancelled</a>
+  </div>
+</div>
+<div class="board {{ etype.key }}">
+  {% for stage in etype.stage_vocab %}
+  <div class="col {{ 'gate' if stage.gate }}">
+    <div class="col-head"><span>{{ stage.label }}{% if stage.gate %}<span class="gate-mark" title="Gate stage">GATE</span>{% endif %}</span><span class="muted">{{ columns[stage.key] | length }}</span></div>
+    {% for s in columns[stage.key] %}{% set e = s.engagement %}
+    <a class="ecard" href="/engagements/{{ e.id }}">
+      <div class="client">{{ e.client.name }}</div>
+      <div class="title">{{ e.name }} {{ eng_status(e.status) }}</div>
+      {{ progress_bar(s.progress) }}
+      <div style="margin-top:5px">{{ progress_text(s.progress) }}</div>
+      <div style="margin-top:5px">{{ kind_mix(s.kind_counts) }}</div>
+      <div class="small muted" style="margin-top:5px">{{ e.owner.label if e.owner else 'No owner' }}</div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

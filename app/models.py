@@ -7,7 +7,7 @@ seeds); these models mirror it for the service layer.
 """
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -45,7 +45,10 @@ def _uuid_pk() -> Mapped[uuid.UUID]:
 
 
 def _created_at() -> Mapped[datetime]:
-    return mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Python-side default so rows created in one transaction still order by creation
+    # (Postgres now() is fixed for the whole transaction).
+    return mapped_column(DateTime(timezone=True), server_default=func.now(),
+                         default=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------- identity & access
@@ -193,7 +196,8 @@ class Engagement(Base):
     owner: Mapped[User | None] = relationship()
     memberships: Mapped[list[EngagementMembership]] = relationship(back_populates="engagement")
     deliverables: Mapped[list["Deliverable"]] = relationship(
-        back_populates="engagement", order_by="Deliverable.created_at"
+        back_populates="engagement", order_by="Deliverable.created_at",
+        primaryjoin="Engagement.id == foreign(Deliverable.engagement_id)",
     )
 
     @property
@@ -264,7 +268,9 @@ class Deliverable(Base):
     hours_estimated: Mapped[Decimal | None] = mapped_column(Numeric)
     created_at: Mapped[datetime] = _created_at()
 
-    engagement: Mapped[Engagement] = relationship(back_populates="deliverables")
+    engagement: Mapped[Engagement] = relationship(
+        back_populates="deliverables", primaryjoin="foreign(Deliverable.engagement_id) == Engagement.id"
+    )
     parent: Mapped["Deliverable | None"] = relationship(remote_side="Deliverable.id", back_populates="children")
     children: Mapped[list["Deliverable"]] = relationship(back_populates="parent", order_by="Deliverable.created_at")
     internal_assignee: Mapped[User | None] = relationship(foreign_keys=[internal_assignee_user_id])

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Add engagement{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/">Portfolio</a> ›</div>
+<h1>Add engagement</h1>
+<p class="muted">An engagement is a typed, time-bound unit of work for a client. Its type decides the stages and the deliverable structure.</p>
+<form class="card" method="post" action="/engagements" style="max-width: 760px">
+  <label class="field"><span>Client</span>
+    <select name="client_id" required>
+      <option value="">— pick a client —</option>
+      {% for c in clients %}<option value="{{ c.id }}" {{ 'selected' if c.id|string == selected_client_id }}>{{ c.name }}</option>{% endfor %}
+    </select></label>
+  <label class="field"><span>Name</span><input type="text" name="name" required placeholder="e.g. Omni Migration — 2026"></label>
+  <div class="field"><span class="small muted" style="font-weight:600">Engagement type</span>
+    <div class="type-choice" style="margin-top:6px">
+      {% for t in types %}
+      <label class="{{ t.key }}"><input type="radio" name="type_key" value="{{ t.key }}" required {{ 'checked' if loop.first }}><b>{{ t.display_name }}</b>
+        <div class="small muted" style="margin-top:6px">Stages</div>
+        <ol>{% for s in t.stage_vocab %}<li>{{ s.label }}{% if s.gate %} <span class="gate-mark">GATE</span>{% endif %}</li>{% endfor %}</ol>
+        <div class="small muted" style="margin-top:6px">Deliverables</div>
+        <ul class="small" style="margin:4px 0 0; padding-left:18px">{% for k in kinds[t.key] %}<li>{{ k.display_name }}{% if k.parent_kind %} <span class="muted">(under {{ k.parent_kind }})</span>{% endif %}</li>{% endfor %}</ul>
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  <p class="help">Starts in the type's first stage. Assign a team from the engagement page afterwards.</p>
+  <button class="btn primary" type="submit">Create engagement</button>
+</form>
+{% endblock %}

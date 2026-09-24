@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "macros.html" import type_badge, initials, eng_status %}
+{% block title %}Team assignment{% endblock %}
+{% block content %}
+<div class="spread" style="margin-bottom:16px">
+  <div><h1>Team assignment</h1>
+    <div class="muted">Who can see and work on each engagement. Analysts and contractors see only what they're assigned here; ops and admin see everything.</div></div>
+</div>
+<div class="grid two">
+  <div class="card flush">
+    <table>
+      <tr><th>Engagement</th><th>Team</th></tr>
+      {% for r in rows %}{% set e = r.engagement %}
+      <tr class="{{ 'unassigned' if not r.team.members }}">
+        <td style="width:40%; vertical-align:top; padding-top:14px">
+          <div class="small muted">{{ e.client.name }}</div>
+          <a href="/engagements/{{ e.id }}"><b>{{ e.name }}</b></a>
+          <div class="row" style="gap:6px; margin-top:4px">{{ type_badge(e.type) }} {{ eng_status(e.status) }} <span class="small muted">{{ e.stage_label }}</span>
+            {% if not r.team.members %}<span class="warn-tag">Needs assignment</span>{% endif %}</div>
+        </td>
+        <td>{% set team = r.team %}{% set compact = True %}{% include "partials/team_panel.html" %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div class="card">
+    <h2>People</h2>
+    <ul class="team-list">
+      {% for u in users %}
+      <li><div class="row" style="gap:8px">{{ initials(u) }}<div><b>{{ u.label }}</b><div class="small muted">{{ u.email }}</div></div></div>
+        <div class="small" style="text-align:right; white-space:nowrap"><span class="role-chip">{{ u.role }}</span>
+          <div class="muted" style="margin-top:3px">{% if u.bypasses_membership %}sees all{% else %}{% set l = load[u.id] %}{{ l['owner'] or 0 }} owned · {{ l['collaborator'] or 0 }} collab{% if l['viewer'] %} · {{ l['viewer'] }} view{% endif %}{% endif %}</div></div></li>
+      {% endfor %}
+    </ul>
+    <p class="small muted" style="margin-top:12px">New people appear here after their first sign-in (default role: analyst).</p>
+  </div>
+</div>
+{% endblock %}

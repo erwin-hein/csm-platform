@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% from "macros.html" import type_badge, progress_bar, progress_text, stepper, member_chips, eng_status %}
+{% block title %}{{ client.name }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/">Portfolio</a> ›</div>
+<div class="spread" style="margin-bottom:16px">
+  <div><h1>{{ client.name }}</h1><div class="muted small">/{{ client.slug }}{% for d in client.domains %} · {{ d }}{% endfor %}</div></div>
+  {% if user.bypasses_membership %}<a class="btn primary" href="/engagements/new?client_id={{ client.id }}">+ Add Engagement</a>{% endif %}
+</div>
+<div class="grid two">
+  <div class="card flush">
+    <div class="section-head"><h2 style="margin:0">Engagements</h2><span class="small muted">{% if not user.bypasses_membership %}only the ones you're assigned to{% endif %}</span></div>
+    <table>
+      <tr><th>Type</th><th>Engagement</th><th>Stage</th><th>Progress</th><th>Team</th></tr>
+      {% for s in engagements %}{% set e = s.engagement %}
+      <tr>
+        <td>{{ type_badge(e.type) }}</td>
+        <td><a href="/engagements/{{ e.id }}"><b>{{ e.name }}</b></a> {{ eng_status(e.status) }}</td>
+        <td style="min-width:160px"><span class="small">{{ e.stage_label }}</span>{{ stepper(e, mini=True) }}</td>
+        <td style="min-width:130px">{{ progress_bar(s.progress) }}{{ progress_text(s.progress) }}</td>
+        <td>{{ member_chips(s.members) }}</td>
+      </tr>
+      {% else %}<tr><td colspan="5" class="empty">No engagements yet.</td></tr>{% endfor %}
+    </table>
+  </div>
+  <div class="stack">
+    <div class="card">
+      <h2>Contacts</h2>
+      <ul class="team-list">
+        {% for c in client.contacts %}<li><div><b>{{ c.name }}</b>{% if c.title %} <span class="muted">· {{ c.title }}</span>{% endif %}<div class="small muted">{{ c.email or '' }}</div></div></li>
+        {% else %}<li class="muted">No contacts yet.</li>{% endfor %}
+      </ul>
+      {% if user.bypasses_membership %}
+      <details style="margin-top:10px"><summary class="small">+ Add contact</summary>
+        <form method="post" action="/clients/{{ client.id }}/contacts" style="margin-top:8px">
+          <label class="field"><span>Name</span><input type="text" name="name" required></label>
+          <label class="field"><span>Email</span><input type="email" name="email"></label>
+          <label class="field"><span>Title</span><input type="text" name="title"></label>
+          <button class="btn small" type="submit">Add contact</button>
+        </form></details>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h2>Aliases</h2>
+      <div class="row">{% for a in client.aliases %}<span class="role-chip"><b>{{ a.alias }}</b> {{ a.alias_type }}</span>{% else %}<span class="muted">None.</span>{% endfor %}</div>
+      {% if user.bypasses_membership %}
+      <details style="margin-top:10px"><summary class="small">+ Add alias</summary>
+        <form method="post" action="/clients/{{ client.id }}/aliases" class="row" style="margin-top:8px">
+          <input type="text" name="alias" required placeholder="alias">
+          <select name="alias_type">{% for t in alias_types %}<option>{{ t }}</option>{% endfor %}</select>
+          <button class="btn small" type="submit">Add</button>
+        </form></details>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

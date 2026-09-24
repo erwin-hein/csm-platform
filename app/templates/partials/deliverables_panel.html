@@ -1,0 +1,58 @@
+{% from "macros.html" import status_pill, dep_pill, progress_bar, progress_text %}
+<div id="deliverables" class="stack">
+{% for section in tree.sections %}
+<div class="card flush">
+  <div class="section-head">
+    <div><h2 style="margin:0">{{ section.kind.display_name }}s{% if section.child_kind %} → {{ section.child_kind.display_name }}s{% endif %}</h2>
+      <span class="small muted">{% if section.child_kind %}Two-level tree; progress rolls up from {{ section.child_kind.display_name | lower }}s.{% else %}Flat list — no parent/child structure for this kind.{% endif %}</span></div>
+    <div class="row">
+      <div style="width:140px">{{ progress_bar(section.progress) }}{{ progress_text(section.progress) }}</div>
+      {% if can_edit %}<a class="btn small" href="/engagements/{{ engagement.id }}/deliverables/new?kind={{ section.kind.kind }}">+ Add {{ section.kind.display_name }}</a>{% endif %}
+    </div>
+  </div>
+
+  {% if not section.nodes %}
+  <div class="empty">No {{ section.kind.display_name | lower }}s yet.</div>
+  {% elif section.child_kind %}
+    {% for node in section.nodes %}{% set d = node.deliverable %}
+    <div class="tree-card accent-{{ engagement.type_key }}">
+      <div class="tree-head">
+        <div><a class="nm" href="/deliverables/{{ d.id }}">{{ d.name }}</a> {{ dep_pill(node.dep_state) }}
+          {% if d.not_applicable %}<span class="status-badge">n/a</span>{% endif %}</div>
+        <div>{% include "partials/deliverable_status.html" %}</div>
+        <div>{{ progress_bar(node.progress) }}{{ progress_text(node.progress) }}</div>
+        <div>{% if can_edit %}<a class="btn small" href="/engagements/{{ engagement.id }}/deliverables/new?kind={{ section.child_kind.kind }}&parent_id={{ d.id }}">+ {{ section.child_kind.display_name }}</a>{% endif %}</div>
+      </div>
+      {% if node.children %}
+      <table>
+        {% for child in node.children %}{% set d = child.deliverable %}
+        <tr class="{{ 'na' if d.not_applicable }}">
+          <td style="padding-left:28px">↳ <a href="/deliverables/{{ d.id }}" style="color: var(--text)">{{ d.name }}</a> {{ dep_pill(child.dep_state) }}</td>
+          <td style="width:190px">{% include "partials/deliverable_status.html" %}</td>
+          <td style="width:150px" class="small muted">{{ d.internal_assignee.label if d.internal_assignee else '' }}</td>
+          <td style="width:100px" class="small muted">{{ d.target_date or '' }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}<div class="empty small">No {{ section.child_kind.display_name | lower }}s yet.</div>{% endif %}
+    </div>
+    {% endfor %}
+    <div style="height: 4px"></div>
+  {% else %}
+  <table class="curriculum">
+    <tr><th style="width:40px">#</th><th>{{ section.kind.display_name }}</th><th>Status</th><th>Dependencies</th><th>Assignee</th><th>Target</th></tr>
+    {% for node in section.nodes %}{% set d = node.deliverable %}
+    <tr class="{{ 'na' if d.not_applicable }}">
+      <td class="muted">{{ loop.index }}</td>
+      <td class="nm"><a href="/deliverables/{{ d.id }}">{{ d.name }}</a>{% if d.not_applicable %} <span class="status-badge">n/a</span>{% endif %}</td>
+      <td style="width:190px">{% include "partials/deliverable_status.html" %}</td>
+      <td>{{ dep_pill(node.dep_state) }}</td>
+      <td class="small muted">{{ d.internal_assignee.label if d.internal_assignee else '' }}</td>
+      <td class="small muted">{{ d.target_date or '' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% endfor %}
+</div>

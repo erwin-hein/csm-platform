@@ -1,0 +1,40 @@
+{% from "macros.html" import initials %}
+{% set e = team.engagement %}
+<div id="team-{{ e.id }}" class="{{ '' if compact else 'card' }}">
+  {% if not compact %}<div class="spread"><h2 style="margin:0">Team</h2>{% if team.can_manage %}<a class="small" href="/team">All assignments →</a>{% endif %}</div>
+  <p class="small muted" style="margin:4px 0 8px">Membership is what grants analysts visibility into this engagement.</p>{% endif %}
+  <ul class="team-list">
+    {% for m in team.members %}
+    <li>
+      <div class="row" style="gap:8px">{{ initials(m.user) }}<div><b>{{ m.user.label }}</b><div class="small muted">{{ m.user.role }}</div></div></div>
+      <div class="row" style="gap:6px">
+        {% if team.can_manage %}
+        <form class="inline" hx-post="/engagements/{{ e.id }}/members" hx-target="#team-{{ e.id }}" hx-swap="outerHTML">
+          <input type="hidden" name="user_id" value="{{ m.user_id }}">
+          <input type="hidden" name="compact" value="{{ 'true' if compact else 'false' }}">
+          <select name="role" onchange="this.form.requestSubmit()">{% for r in team.roles %}<option {{ 'selected' if r == m.role }}>{{ r }}</option>{% endfor %}</select>
+        </form>
+        <form class="inline" hx-post="/engagements/{{ e.id }}/members/{{ m.user_id }}/remove" hx-target="#team-{{ e.id }}" hx-swap="outerHTML"
+              hx-confirm="Remove {{ m.user.label }} from {{ e.name }}? They'll lose access.">
+          <input type="hidden" name="compact" value="{{ 'true' if compact else 'false' }}">
+          <button class="btn small danger" type="submit" title="Remove">✕</button>
+        </form>
+        {% else %}<span class="role-chip {{ m.role }}">{{ m.role }}</span>{% endif %}
+      </div>
+    </li>
+    {% else %}
+    <li><span class="warn-tag">No one assigned</span> <span class="small muted">— only ops/admin can see this engagement.</span></li>
+    {% endfor %}
+  </ul>
+  {% if team.can_manage and team.candidates %}
+  <form class="row" style="margin-top:10px; gap:6px" hx-post="/engagements/{{ e.id }}/members" hx-target="#team-{{ e.id }}" hx-swap="outerHTML">
+    <input type="hidden" name="compact" value="{{ 'true' if compact else 'false' }}">
+    <select name="user_id" required>
+      <option value="">+ Assign someone…</option>
+      {% for u in team.candidates %}<option value="{{ u.id }}">{{ u.label }} ({{ u.role }})</option>{% endfor %}
+    </select>
+    <select name="role">{% for r in team.roles %}<option {{ 'selected' if r == ('collaborator' if team.members else 'owner') }}>{{ r }}</option>{% endfor %}</select>
+    <button class="btn small primary" type="submit">Assign</button>
+  </form>
+  {% endif %}
+</div>

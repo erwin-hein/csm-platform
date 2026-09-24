@@ -1,0 +1,48 @@
+{% macro status_pill(status) -%}
+<span class="pill s-{{ status }}">{{ PIPELINE_LABELS[status] }}</span>
+{%- endmacro %}
+
+{% macro dep_pill(state) -%}
+{% if state != 'clear' %}<span class="pill d-{{ state }}">{{ DEP_STATE_LABELS[state] }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro type_badge(etype) -%}
+<span class="type-badge type-{{ etype.key }}">{{ etype.display_name }}</span>
+{%- endmacro %}
+
+{% macro eng_status(status) -%}
+{% if status != 'active' %}<span class="status-badge {{ status }}">{{ status }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro progress_bar(p) -%}
+<div class="progress" title="{{ p.done }}/{{ p.applicable }} done">
+  {% for s in ['done', 'external_validation', 'internal_validation', 'in_progress'] %}
+    {% if p.applicable and p.by_status[s] %}<span class="p-{{ s }}" style="width: {{ 100 * p.by_status[s] / p.applicable }}%"></span>{% endif %}
+  {% endfor %}
+</div>
+{%- endmacro %}
+
+{% macro progress_text(p) -%}
+<span class="small muted">{{ p.done }}/{{ p.applicable }} done{% if p.attention %} · <span style="color: var(--d-blocked)">{{ p.attention }} need attention</span>{% endif %}</span>
+{%- endmacro %}
+
+{% macro stepper(engagement, mini=False) -%}
+<div class="stepper {{ engagement.type_key }}{{ ' mini' if mini }}">
+  {% set cur = engagement.stage_index %}
+  {% for s in engagement.type.stage_vocab %}
+    <div class="step {{ 'past' if loop.index0 < cur }} {{ 'current' if loop.index0 == cur }} {{ 'gate' if s.gate }}" title="{{ s.label }}{{ ' (gate)' if s.gate }}">{{ s.label }}</div>
+  {% endfor %}
+</div>
+{%- endmacro %}
+
+{% macro initials(u) -%}
+<span class="avatar" title="{{ u.label }}">{{ (u.display_name or u.email)[:1] | upper }}{{ ((u.display_name or '').split(' ')[-1] or '')[:1] | upper }}</span>
+{%- endmacro %}
+
+{% macro member_chips(members) -%}
+{% for m in members %}<span class="role-chip {{ m.role }}"><b>{{ m.user.label }}</b> {{ m.role }}</span> {% else %}<span class="warn-tag">No one assigned</span>{% endfor %}
+{%- endmacro %}
+
+{% macro kind_mix(kind_counts) -%}
+<span class="kind-mix">{% for label, n in kind_counts %}{{ n }} {{ label | lower }}{{ 's' if n != 1 }}{{ ' · ' if not loop.last }}{% endfor %}</span>
+{%- endmacro %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ engagement.name }}{% endblock %}
+{% block content %}
+<div class="stack">
+  {% include "partials/engagement_header.html" %}
+  <div class="grid two">
+    {% include "partials/deliverables_panel.html" %}
+    <div class="stack">
+      {% set compact = False %}
+      {% include "partials/team_panel.html" %}
+      <div class="card small">
+        <h3>About this type</h3>
+        <dl class="kv">
+          <dt>Type</dt><dd>{{ engagement.type.display_name }} <code class="muted">{{ engagement.type_key }}</code></dd>
+          <dt>Stages</dt><dd>{{ engagement.type.stage_vocab | length }}</dd>
+          <dt>Kinds</dt><dd>{% for s in tree.sections %}{{ s.kind.display_name }}{% if s.child_kind %} → {{ s.child_kind.display_name }}{% endif %}{{ '; ' if not loop.last }}{% endfor %}</dd>
+          <dt>Started</dt><dd>{{ engagement.started_at.strftime('%b %d, %Y') if engagement.started_at else '—' }}</dd>
+        </dl>
+        {% if user.bypasses_membership %}<p style="margin:10px 0 0"><a href="/events?engagement={{ engagement.id }}">Event log for this engagement →</a></p>{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
