@@ -111,9 +111,30 @@ CREATE TABLE engagement_types (
   key TEXT PRIMARY KEY,                -- 'quickstart' | 'migration' | 'support_retainer' | ...
   display_name TEXT,
   storage_mode TEXT NOT NULL,          -- 'jsonb' | 'graduated'
-  stage_vocab JSONB NOT NULL           -- ordered [{key,label}], drives board columns — vocab itself not yet drafted for any type
+  stage_vocab JSONB NOT NULL           -- ordered [{key,label}], drives board columns
 );
+```
 
+**The two core types' vocabularies, drafted now** (a loose end flagged earlier in this document, resolved once PoC seed data made it concrete) — grounded in the reference tool's actual stage/kind vocabulary, not invented from scratch:
+
+```sql
+-- 'quickstart': call-driven curriculum, flat structure
+INSERT INTO engagement_types VALUES ('quickstart', 'QuickStart', 'jsonb', '[
+  {"key":"kickoff","label":"Kickoff"}, {"key":"dev_training","label":"Dev Training"},
+  {"key":"codev","label":"Co-Dev"}, {"key":"creator_training","label":"Creator Training"},
+  {"key":"wrapup","label":"Wrap-Up"}, {"key":"handed_off","label":"Handed Off"},
+  {"key":"post_qs","label":"Post-QS"}, {"key":"dormant","label":"Dormant"}
+]');
+
+-- 'migration': coarse 6-stage skeleton, the semantic-layer stage is a gate (flagged in the vocab itself, not a new column)
+INSERT INTO engagement_types VALUES ('migration', 'Migration', 'jsonb', '[
+  {"key":"scoping","label":"Scoping"}, {"key":"access_setup","label":"Access & Setup"},
+  {"key":"semantic_parity","label":"Semantic-layer Parity","gate":true}, {"key":"dashboard_build","label":"Dashboard Build"},
+  {"key":"client_validation","label":"Client Validation"}, {"key":"golive_wrapup","label":"Go-live / Wrap-up"}
+]');
+```
+
+```sql
 CREATE TABLE engagements (
   id UUID PRIMARY KEY,
   client_id UUID REFERENCES clients(id),
@@ -146,7 +167,21 @@ CREATE TABLE deliverable_kinds (
   display_name TEXT,
   PRIMARY KEY (engagement_type_key, kind)
 );
+```
 
+**Kinds for the two core types**, drafted alongside the stage vocab above:
+
+```sql
+-- migration: two parallel ≤2-level trees — phase→milestone, dashboard→tile (collapses what were separate tables in the reference tool)
+INSERT INTO deliverable_kinds VALUES
+  ('migration', 'phase', 'Phase'), ('migration', 'milestone', 'Milestone'),
+  ('migration', 'dashboard', 'Dashboard'), ('migration', 'tile', 'Tile');
+
+-- quickstart: flat curriculum coverage, no parent/child tree needed
+INSERT INTO deliverable_kinds VALUES ('quickstart', 'module', 'Curriculum Module');
+```
+
+```sql
 CREATE TABLE deliverables (
   id UUID PRIMARY KEY,
   engagement_id UUID REFERENCES engagements(id),
@@ -606,3 +641,4 @@ Dated entries for traceability — why something is the way it is, in case it's 
 - **`mark_at_risk` redesigned as an alert severity tag, not a health override**: the reference tool's rules engine could write directly to a manual health-override column; we don't have one, on purpose (health is fully derived). Confirmed with Erwin via a concrete walkthrough (an Acme Corp engagement seen by an Admin, an Ops user, and one assigned Analyst) that also surfaced two things worth stating explicitly rather than leaving implicit: (1) rules evaluate and cooldown per-Engagement, never per-viewer — visibility of the result is a separate, read-time concern; (2) most `generated_content` kinds are shared across every viewer who can see the entity by construction (`entity_type` in meeting/engagement/client), so a cache-check-before-generate rule in `POST .../generate` is what actually prevents three viewers from tripling LLM spend on the same meeting — only `internal_digest`/`weekly_digest` are genuinely personal and can't be shared. The walkthrough also exposed a real gap: a rules-engine-triggered `draft_nudge` has no acting user to resolve opt-in against, so it resolves against the engagement owner's preference instead.
 - **Templates engine collapsed from three concerns to one**: the reference tool's template engine seeded checklists, portal visibility, and default rules. Two of those turned out to be moot here as a direct consequence of earlier decisions — portal visibility toggles were deferred entirely, and rules are globally-defined/type-scoped rather than per-engagement, so neither needs seeding. Only checklist seeding survives, and it reuses the Deliverables engine rather than inventing a second entity type, since a checklist item is structurally just a lightweight deliverable.
 - **v1 design phase closed out (2026-09-24)**: every tracked Open item is resolved. §5 stays in the document as a live placeholder rather than being deleted, since a real design question always surfaces mid-build — the expectation going forward is that it gets added there, worked through the same way, and folded back into §2/§3/§6, not left to live only in a conversation or a commit message.
+- **`quickstart` and `migration` stage/kind vocabularies drafted (2026-09-24)**: previously left as "shape defined, vocab TBD" in §3. Forced concrete by PoC seed-data needs; drafted from the reference tool's actual vocabulary (its QS stage list, its 6-stage migration skeleton including the semantic-layer-parity gate) rather than invented fresh — see engagement_types and deliverable_kinds seed statements above.
