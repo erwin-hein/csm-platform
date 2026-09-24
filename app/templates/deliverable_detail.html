@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% from "macros.html" import status_pill, dep_pill, type_badge, initials %}
+{% block title %}{{ d.name }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/">Portfolio</a> › <a href="/clients/{{ engagement.client.id }}">{{ engagement.client.name }}</a> ›
+  <a href="/engagements/{{ engagement.id }}">{{ engagement.name }}</a> ›{% if d.parent %} <a href="/deliverables/{{ d.parent.id }}">{{ d.parent.name }}</a> ›{% endif %}</div>
+<div class="spread" style="margin-bottom:14px">
+  <div><h1>{{ d.name }}</h1>
+    <div class="row">{{ type_badge(engagement.type) }} <span class="role-chip"><b>{{ kind.display_name }}</b></span> {{ status_pill(d.pipeline_status) }} {{ dep_pill(dep_state) }}
+      {% if d.not_applicable %}<span class="status-badge">not applicable</span>{% endif %}</div></div>
+</div>
+
+<div class="grid two">
+  <div class="stack">
+    <div class="card">
+      <h2>Pipeline</h2>
+      {% if can_edit %}
+      <form class="pipeline" method="post" action="/deliverables/{{ d.id }}/pipeline">
+        {% for s in pipeline_statuses %}<button class="btn s-{{ s }} {{ 'on' if s == d.pipeline_status }}" name="pipeline_status" value="{{ s }}" {{ 'disabled' if s == d.pipeline_status }}>{{ PIPELINE_LABELS[s] }}</button>{% endfor %}
+      </form>
+      {% else %}<div class="pipeline">{% for s in pipeline_statuses %}<span class="btn s-{{ s }} {{ 'on' if s == d.pipeline_status }}">{{ PIPELINE_LABELS[s] }}</span>{% endfor %}</div>{% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Dependencies</h2>
+      <div class="dep-box {{ dep_state }}">
+        <b>{{ DEP_STATE_LABELS[dep_state] }}</b> <span class="small muted">— derived from the manual block flag and the blockers below, never stored.</span>
+        <div class="small" style="margin-top:4px">
+          {% if dep_state == 'blocked' %}Flagged blocked: “{{ d.blocked_reason }}”{% if blockers %} — and still waiting on unfinished work.{% endif %}
+          {% elif dep_state == 'maybe_unblocked' %}Flagged blocked (“{{ d.blocked_reason }}”), but everything it waits on is now done. The flag may be stale — clear it if so.
+          {% elif dep_state == 'waiting' %}Not flagged, but waiting on unfinished work below.
+          {% else %}Nothing is holding this up.{% endif %}
+        </div>
+      </div>
+      <h3 style="margin-top:14px">Waiting on</h3>
+      <table>
+        {% for b in blockers %}
+        <tr><td><a href="/deliverables/{{ b.id }}">{{ b.name }}</a> <span class="small muted">{{ b.kind }}</span></td>
+          <td style="width:170px">{{ status_pill(b.pipeline_status) }}{% if b.not_applicable %} <span class="status-badge">n/a</span>{% endif %}</td>
+          <td style="width:60px">{% if can_edit %}<form class="inline" method="post" action="/deliverables/{{ d.id }}/blockers/{{ b.id }}/remove"><button class="btn small danger" title="Remove dependency">✕</button></form>{% endif %}</td></tr>
+        {% else %}<tr><td class="muted">Nothing.</td></tr>{% endfor %}
+      </table>
+      {% if can_edit and candidates %}
+      <form class="row" method="post" action="/deliverables/{{ d.id }}/blockers" style="margin-top:8px; gap:6px">
+        <select name="blocker_id" required><option value="">+ Waits on…</option>
+          {% for c in candidates %}<option value="{{ c.id }}">{{ c.kind | capitalize }}: {{ c.name }}</option>{% endfor %}</select>
+        <button class="btn small" type="submit">Add dependency</button>
+      </form>
+      {% endif %}
+      {% if blocking %}
+      <h3 style="margin-top:14px">Blocking</h3>
+      <ul class="small" style="margin:0; padding-left:18px">{% for b in blocking %}<li><a href="/deliverables/{{ b.id }}">{{ b.name }}</a> <span class="muted">{{ PIPELINE_LABELS[b.pipeline_status] }}</span></li>{% endfor %}</ul>
+      {% endif %}
+
+      {% if can_edit %}
+      <h3 style="margin-top:16px">Manual block flag</h3>
+      {% if d.blocked %}
+      <form method="post" action="/deliverables/{{ d.id }}/block" class="row">
+        <input type="hidden" name="blocked" value="false">
+        <span class="small">“{{ d.blocked_reason }}”</span>
+        <button class="btn small" type="submit">Clear block</button>
+      </form>
+      {% else %}
+      <form method="post" action="/deliverables/{{ d.id }}/block" class="row" style="gap:6px">
+        <input type="hidden" name="blocked" value="true">
+        <input type="text" name="blocked_reason" placeholder="Why is it blocked?" required style="flex:1">
+        <button class="btn small danger" type="submit">Flag blocked</button>
+      </form>
+      {% endif %}
+      {% endif %}
+    </div>
+
+    {% if child_kind %}
+    <div class="card flush">
+      <div class="section-head"><h2 style="margin:0">{{ child_kind.display_name }}s</h2>
+        {% if can_edit %}<a class="btn small" href="/engagements/{{ engagement.id }}/deliverables/new?kind={{ child_kind.kind }}&parent_id={{ d.id }}">+ Add {{ child_kind.display_name }}</a>{% endif %}</div>
+      <table>
+        {% for c, st in children %}
+        <tr class="{{ 'na' if c.not_applicable }}"><td><a href="/deliverables/{{ c.id }}">{{ c.name }}</a> {{ dep_pill(st) }}</td><td style="width:180px">{{ status_pill(c.pipeline_status) }}</td></tr>
+        {% else %}<tr><td class="empty">None yet.</td></tr>{% endfor %}
+      </table>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <h2>Activity <span class="small muted" style="font-weight:400">— internal only</span></h2>
+      {% if can_edit %}
+      <form method="post" action="/deliverables/{{ d.id }}/notes" style="margin-bottom:10px">
+        <textarea name="body" placeholder="Add an internal note…" required></textarea>
+        <button class="btn small" type="submit" style="margin-top:6px">Add note</button>
+      </form>
+      {% endif %}
+      <ul class="activity">
+        {% for a in activity %}
+        <li><div class="small"><b>{{ a.actor.label if a.actor else 'System' }}</b> <span class="muted">· {{ a.kind | replace('_', ' ') }} · {{ a.created_at.strftime('%b %d, %H:%M') }}</span></div>
+          {% if a.kind == 'note' %}<div class="note">{{ a.body }}</div>{% else %}<div class="small">{{ a.body }}</div>{% endif %}</li>
+        {% else %}<li class="muted">No activity yet.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <h2>Details</h2>
+      {% if can_edit %}
+      <form method="post" action="/deliverables/{{ d.id }}/edit">
+        <label class="field"><span>Name</span><input type="text" name="name" value="{{ d.name }}" required></label>
+        <label class="field"><span>Internal assignee</span>
+          <select name="assignee_id"><option value="">— unassigned —</option>
+            {% for m in team %}<option value="{{ m.user_id }}" {{ 'selected' if m.user_id == d.internal_assignee_user_id }}>{{ m.user.label }} ({{ m.role }})</option>{% endfor %}</select></label>
+        <label class="field"><span>Priority</span>
+          <select name="priority"><option value="">—</option>{% for p in priorities %}<option {{ 'selected' if p == d.priority }}>{{ p }}</option>{% endfor %}</select></label>
+        <label class="field"><span>Target date</span><input type="date" name="target_date" value="{{ d.target_date or '' }}"></label>
+        <label class="field"><span>Hours estimated</span><input type="number" step="0.25" min="0" name="hours_estimated" value="{{ d.hours_estimated if d.hours_estimated is not none else '' }}"></label>
+        <button class="btn small" type="submit">Save details</button>
+      </form>
+      <form method="post" action="/deliverables/{{ d.id }}/applicable" style="margin-top:12px">
+        <input type="hidden" name="not_applicable" value="{{ 'false' if d.not_applicable else 'true' }}">
+        <button class="btn small" type="submit">{{ 'Mark applicable again' if d.not_applicable else 'Mark not applicable' }}</button>
+        <div class="help">N/A items drop out of progress and don't block anything.</div>
+      </form>
+      {% else %}
+      <dl class="kv">
+        <dt>Assignee</dt><dd>{{ d.internal_assignee.label if d.internal_assignee else '—' }}</dd>
+        <dt>Priority</dt><dd>{{ d.priority or '—' }}</dd>
+        <dt>Target date</dt><dd>{{ d.target_date or '—' }}</dd>
+        <dt>Hours est.</dt><dd>{{ d.hours_estimated if d.hours_estimated is not none else '—' }}</dd>
+      </dl>
+      <p class="small muted">You have view-only access.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,7 @@
+{% from "macros.html" import status_pill %}
+{% if can_edit %}
+<select class="pipeline-select" name="pipeline_status" hx-post="/deliverables/{{ d.id }}/pipeline" hx-vals='{"panel": "1"}'
+        hx-target="#deliverables" hx-swap="outerHTML" hx-trigger="change">
+  {% for s in pipeline_statuses %}<option value="{{ s }}" {{ 'selected' if s == d.pipeline_status }}>{{ PIPELINE_LABELS[s] }}</option>{% endfor %}
+</select>
+{% else %}{{ status_pill(d.pipeline_status) }}{% endif %}

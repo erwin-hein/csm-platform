@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block content %}
+<div class="login-wrap card">
+  <h1>Shearwater Engagements</h1>
+  <p class="muted">Sign in with your @shearwaterdata.com Google account.</p>
+  {% if error %}<div class="flash">{{ error }}</div>{% endif %}
+  {% if google_enabled %}
+  <a class="btn primary" href="/auth/google" hx-boost="false">Sign in with Google</a>
+  {% else %}
+  <p class="small muted">Google sign-in isn't configured on this deployment (set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).</p>
+  {% endif %}
+  {% if dev_login_enabled %}
+  <p class="small" style="margin-top:20px"><a href="/demo-login">Demo login (seeded users) →</a></p>
+  {% endif %}
+</div>
+{% endblock %}

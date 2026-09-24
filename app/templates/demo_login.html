@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Demo login{% endblock %}
+{% block content %}
+<div class="login-wrap card">
+  <h1>Demo login</h1>
+  <p class="small muted">For demoing seeded accounts that have no real Google login. Goes through the same
+    user-resolution path as Google sign-in (domain rule + ADMIN_EMAILS bootstrap apply). Disabled unless
+    DEV_LOGIN_PASSCODE is set.</p>
+  {% if error %}<div class="flash">{{ error }}</div>{% endif %}
+  <form method="post" action="/demo-login" hx-boost="false">
+    <label class="field"><span>Demo passcode</span><input type="password" name="passcode" required></label>
+    <label class="field"><span>Sign in as</span>
+      <select name="email" id="demo-email">
+        {% for u in users %}<option value="{{ u.email }}">{{ u.label }} — {{ u.role }} ({{ u.email }})</option>{% endfor %}
+      </select>
+    </label>
+    <button class="btn primary" type="submit">Sign in</button>
+  </form>
+  <details style="margin-top:16px"><summary class="small muted">Sign in as another @shearwaterdata.com email</summary>
+    <form method="post" action="/demo-login" hx-boost="false" style="margin-top:10px">
+      <label class="field"><span>Demo passcode</span><input type="password" name="passcode" required></label>
+      <label class="field"><span>Email</span><input type="email" name="email" placeholder="name@shearwaterdata.com" required></label>
+      <p class="help">A new email is created on first sign-in as analyst — or admin, if listed in ADMIN_EMAILS.</p>
+      <button class="btn" type="submit">Sign in</button>
+    </form>
+  </details>
+</div>
+{% endblock %}

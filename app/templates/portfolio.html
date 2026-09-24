@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% from "macros.html" import type_badge, progress_bar, progress_text, stepper, member_chips, kind_mix, eng_status %}
+{% block title %}Portfolio{% endblock %}
+{% block content %}
+<div class="spread" style="margin-bottom: 18px">
+  <div>
+    <h1>Portfolio</h1>
+    <div class="muted">
+      {% if user.bypasses_membership %}All clients and engagements — {{ user.role }} sees everything regardless of assignment.
+      {% else %}Engagements you're assigned to. Other engagements — even on the same clients — aren't shown.{% endif %}
+    </div>
+  </div>
+  {% if user.bypasses_membership %}
+  <div class="row"><a class="btn primary" href="/clients/new">+ Add Client</a><a class="btn" href="/engagements/new">+ Add Engagement</a></div>
+  {% endif %}
+</div>
+
+{% for client in clients %}
+<section class="client-block">
+  <div class="spread">
+    <h2 style="margin:0"><a href="/clients/{{ client.id }}" style="color: inherit">{{ client.name }}</a>
+      <span class="small muted">{{ client.domains | join(' · ') }}</span></h2>
+    {% if user.bypasses_membership %}<a class="btn small" href="/engagements/new?client_id={{ client.id }}">+ Add Engagement</a>{% endif %}
+  </div>
+  <div class="card flush">
+    {% for s in by_client[client.id] %}{% set e = s.engagement %}
+    <div class="eng-row accent-{{ e.type_key }}">
+      <div>{{ type_badge(e.type) }}</div>
+      <div class="name"><a href="/engagements/{{ e.id }}">{{ e.name }}</a> {{ eng_status(e.status) }}
+        <div>{{ kind_mix(s.kind_counts) }}</div></div>
+      <div><div class="small"><b>{{ e.stage_label }}</b> <span class="muted">· stage {{ e.stage_index + 1 }} of {{ e.type.stage_vocab | length }}</span></div>{{ stepper(e, mini=True) }}</div>
+      <div>{{ progress_bar(s.progress) }}<div style="margin-top:4px">{{ progress_text(s.progress) }}</div></div>
+      <div class="small">{% if e.owner %}{{ e.owner.label }}{% else %}<span class="warn-tag">No owner</span>{% endif %}</div>
+    </div>
+    {% else %}
+    <div class="empty">No engagements yet.</div>
+    {% endfor %}
+  </div>
+</section>
+{% else %}
+<div class="card empty">{% if user.bypasses_membership %}No clients yet — add one to get started.{% else %}You haven't been assigned to any engagements yet. Ask ops to add you to a team.{% endif %}</div>
+{% endfor %}
+{% endblock %}

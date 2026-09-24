@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Engagements{% endblock %} · Shearwater</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body hx-boost="true">
+{% if user %}
+<header class="topbar">
+  <a class="brand" href="/">Shearwater <span>Engagements</span></a>
+  <nav>
+    <a href="/" class="{{ 'active' if nav == 'portfolio' }}">Portfolio</a>
+    {% for key, label in nav_types %}
+    <a href="/board/{{ key }}" class="{{ 'active' if nav == 'board:' ~ key }}">{{ label }} board</a>
+    {% endfor %}
+    {% if user.bypasses_membership %}
+    <a href="/team" class="{{ 'active' if nav == 'team' }}">Team assignment</a>
+    <a href="/events" class="{{ 'active' if nav == 'events' }}">Event log</a>
+    {% endif %}
+  </nav>
+  <div class="me">
+    <span>{{ user.label }}</span><span class="role-badge">{{ user.role }}</span>
+    <form method="post" action="/logout"><button type="submit">Sign out</button></form>
+  </div>
+</header>
+{% endif %}
+<main class="{% block main_class %}{% endblock %}">
+  <div id="flash"></div>
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

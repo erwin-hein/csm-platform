@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Event log{% endblock %}
+{% block content %}
+<div class="spread" style="margin-bottom:14px">
+  <div><h1>Event log{% if scoped %}: {{ scoped.name }}{% endif %}</h1>
+    <div class="muted">The append-only spine. Every mutation writes one of these in the same transaction. Nothing subscribes yet — digests, rules and notifications will.</div></div>
+  {% if scoped %}<a class="btn small" href="/events">Show all</a>{% endif %}
+</div>
+<div class="card flush">
+  <table>
+    <tr><th>#</th><th>When</th><th>Event</th><th>Entity</th><th>Actor</th><th>Payload</th></tr>
+    {% for ev in events %}
+    <tr>
+      <td class="small muted">{{ ev.id }}</td>
+      <td class="small" style="white-space:nowrap">{{ ev.occurred_at.strftime('%b %d %H:%M:%S') }}</td>
+      <td><code>{{ ev.event_type }}</code></td>
+      <td class="small">{% if ev.entity_type == 'engagement' %}<a href="/engagements/{{ ev.entity_id }}">engagement</a>{% elif ev.entity_type == 'deliverable' %}<a href="/deliverables/{{ ev.entity_id }}">deliverable</a>{% elif ev.entity_type == 'client' %}<a href="/clients/{{ ev.entity_id }}">client</a>{% else %}{{ ev.entity_type }}{% endif %}</td>
+      <td class="small">{{ ev.actor.label if ev.actor else '—' }}</td>
+      <td><div class="event-payload">{{ ev.payload | tojson }}</div></td>
+    </tr>
+    {% else %}<tr><td colspan="6" class="empty">No events.</td></tr>{% endfor %}
+  </table>
+</div>
+{% endblock %}
