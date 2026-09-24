@@ -1,0 +1,38 @@
+# Render Blueprint for the PoC: one web service + one managed Postgres.
+# New Blueprint in the Render dashboard -> point at this repo/branch.
+databases:
+  - name: csm-platform-db
+    databaseName: csm
+    user: csm
+    plan: free            # PoC choice — free Postgres expires after 30 days; bump to basic-256mb to keep it
+
+services:
+  - type: web
+    name: csm-platform
+    runtime: python
+    plan: free            # PoC choice — spins down when idle (first request after that takes ~1 min)
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    startCommand: ./scripts/start.sh
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: DATABASE_URL
+        fromDatabase:
+          name: csm-platform-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: SEED_DEMO_DATA
+        value: "true"
+      # Demo login for seeded users (they have no real Google accounts). Remove to disable.
+      - key: DEV_LOGIN_PASSCODE
+        generateValue: true
+      # Comma-separated; first Google/demo login with one of these becomes admin.
+      - key: ADMIN_EMAILS
+        sync: false
+      # Optional for the demo; required for real Google sign-in.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
