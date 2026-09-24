@@ -39,7 +39,8 @@ The first start migrates the database and seeds the demo data. Restarts keep you
 - **Stop:** Ctrl+C, or `docker compose down`.
 - **Start over with fresh demo data:** `docker compose down -v` (deletes the database volume), then `docker compose up`.
 - **Pick up code changes:** `git pull`, then `docker compose up --build`.
-- **Optional settings:** `ADMIN_EMAILS` and the Google OAuth vars can go in a `.env` file next to `docker-compose.yml`.
+- **Configuration:** none required. `docker-compose.yml` already holds every setting the demo needs. For the optional ones (`ADMIN_EMAILS`, Google OAuth), copy `.env.example` to `.env` and fill it in.
+- **"no configuration file provided: not found"** means Docker can't see `docker-compose.yml` in the current folder. Run the command from the repo root, and make sure your checkout actually contains that file.
 
 ### Without Docker
 
@@ -90,7 +91,7 @@ Seeded users (all fictional): Morgan Ellis (admin); Priya Raman, Tomás Alvarez,
 
 ## PoC judgment calls to review
 
-These are small calls I made without you. Each one can be reverted. The larger spec gaps are in CLAUDE.md §5.
+These are small calls I made without you. Each one can be reverted. The larger spec gaps it surfaced were all signed off and now live in CLAUDE.md §2/§3 (logged in §6).
 
 **Tooling (not in the spec)**
 - **uv** for dependency management (`pyproject.toml` + `uv.lock`).
@@ -101,7 +102,7 @@ These are small calls I made without you. Each one can be reverted. The larger s
 - Layout is `app/{services,web,templates,static}`, with routes kept thin over services.
 
 **Schema additions beyond §3.** All are enforcement only; no new concepts.
-- `deliverable_kinds.parent_kind` says which kind may parent which. The ≤2-level trees needed it (see §5).
+- `deliverable_kinds.parent_kind` says which kind may parent which. The ≤2-level trees needed it (now in CLAUDE.md §3).
 - A composite FK `deliverables(engagement_id, engagement_type_key) → engagements(id, type_key)`, so the denormalized type key can't drift.
 - CHECK constraints on `pipeline_status`, `engagements.status`, no self-parent, and no self-blocker.
 - A partial unique index allowing one `owner` membership per engagement. That membership *is* the owner; there is no owner column (now in CLAUDE.md §3/§6).

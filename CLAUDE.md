@@ -38,7 +38,7 @@ An earlier attempt at this same rebuild stalled when a developer resource fell t
 | 13 | **Database** | Postgres (self-hosted via Render's managed Postgres), not SQLite. BigQuery explicitly ruled out as the operational/OLTP store (wrong latency/cost/transaction model for a chatty CRUD app) — a plausible **future** downstream analytics sink fed *from* Postgres, not built now. |
 | 14 | **Claude/LLM billing** | Single **org-level Anthropic API key** for the whole app (not per-user subscription OAuth à la Hao's `claude setup-token` hack, not per-user/per-workspace API keys) — chosen pragmatically given ops/finance uncertainty about how the company wants this billed. Per-user cost attribution kept independently in an app-level `llm_usage` log regardless of the shared credential, so this is reversible later (splitting into per-user/per-workspace keys) without touching anything above the credential-resolution layer. Two-tier model choice, per-feature budget/timeout discipline, and cache-first-never-on-GET are all explicitly ported principles from Hao's `llm.py`. |
 | 15 | **LLM content generation is opt-in, per-user default + per-engagement override, per-kind** | See §3 `llm_content_preferences`. Default is **off** (a real spend-control lever, not a feature everyone must opt out of) — absence of a preference row cascades to "disabled," so a brand-new user starts with everything off until they explicitly enable specific kinds. |
-| 16 | **Authentication** | Hand-rolled (not a managed provider like WorkOS), chosen for MVP speed since internal users are the near-term priority and external users are out of scope for now anyway. **Internal** (`analyst`/`contractor`/`ops`/`admin`): Google OAuth restricted to `@shearwaterdata.com`, verified server-side (the `hd` hint is not enforcement). **External** (`client_external`): passwordless email magic-link owned entirely by the app — deferred until the client-portal work begins (see §4), since it's the same piece of work as that feature. First-login bootstrap via an `ADMIN_EMAILS` env var seeding initial `internal_role='admin'` rows (avoids a chicken-and-egg problem); everyone else defaults to `analyst`. Session = signed httponly secure cookie holding the user id. CSRF via origin/referer check on state-changing routes, same principle as Hao's tool. Worth carrying over conceptually (not yet built): Hao's actor-vs-scope split for admin "act as another user" impersonation with audit trail. |
+| 16 | **Authentication** | Hand-rolled (not a managed provider like WorkOS), chosen for MVP speed since internal users are the near-term priority and external users are out of scope for now anyway. **Internal** (`analyst`/`contractor`/`ops`/`admin`): Google OAuth restricted to `@shearwaterdata.com`, verified server-side (the `hd` hint is not enforcement). **External** (`client_external`): passwordless email magic-link owned entirely by the app — deferred until the client-portal work begins (see §4), since it's the same piece of work as that feature. First-login bootstrap via an `ADMIN_EMAILS` env var seeding initial `internal_role='admin'` rows (avoids a chicken-and-egg problem); everyone else defaults to `analyst`. Session = signed httponly secure cookie holding the user id. CSRF via origin/referer check on state-changing routes, same principle as Hao's tool. Worth carrying over conceptually (not yet built): Hao's actor-vs-scope split for admin "act as another user" impersonation with audit trail. **Demo login**: a passcode-gated `/demo-login`, off unless `DEV_LOGIN_PASSCODE` is set, lets demos sign in as seeded users who have no Google account; it runs through the same user-resolution path (domain rule + `ADMIN_EMAILS` bootstrap) as Google sign-in. Admin impersonation above is the long-term replacement. |
 | 17 | **OAuth/connections** (Calendar, Fathom, Harvest, Slack, Gmail) | Per-user-per-provider token storage, same shape as Hao's `connections` table, FK'd to real `users.id` instead of email strings. Gmail added for CSAT delivery (draft-only, `gmail.compose` scope, never a send scope). **Notion is the one exception** — org-level, not per-user (single admin-configured token, one shared company workspace being read), same reasoning as the single Claude API key. See §3 Knowledge base. |
 | 18 | **Background jobs** | A real job queue (Celery/RQ-class), replacing Hao's LaunchAgent/cron/daemon-thread pattern — needed given multiple analysts' syncs running concurrently on a shared server rather than one person's Mac. |
 | 19 | **Migration tooling** | Alembic (implied by "real Postgres migrations," not yet exercised in detail). |
@@ -77,6 +77,12 @@ CREATE TABLE engagement_memberships (
 -- An engagement's owner IS its single 'owner' membership — there is no separate owner column (see §6).
 CREATE UNIQUE INDEX uq_engagement_memberships_one_owner ON engagement_memberships (engagement_id) WHERE role = 'owner';
 ```
+
+**Permission model** (internal users):
+- **Read** an engagement and its deliverables: any membership role, or `ops`/`admin`.
+- **Edit** deliverables and move stage/status: `owner` or `collaborator` membership, or `ops`/`admin`. `viewer` is read-only.
+- **Create** clients and engagements, add aliases/contacts, and **manage memberships**: `ops`/`admin` only.
+- A user with no visibility gets a 404, never a 403, so an engagement's existence doesn't leak; a `viewer` attempting an edit gets a 403.
 
 > Note: `users.llm_content_default` as a flat boolean was an intermediate design, **superseded** by the per-kind `llm_content_preferences` table below. Do not implement the flat column.
 
@@ -167,8 +173,13 @@ CREATE TABLE deliverable_kinds (
   engagement_type_key TEXT REFERENCES engagement_types(key),
   kind TEXT NOT NULL,
   display_name TEXT,
-  PRIMARY KEY (engagement_type_key, kind)
+  parent_kind TEXT,                    -- which kind may parent this one; NULL = a root (top-level) kind
+  PRIMARY KEY (engagement_type_key, kind),
+  FOREIGN KEY (engagement_type_key, parent_kind) REFERENCES deliverable_kinds(engagement_type_key, kind)
 );
+-- A child kind requires a parent of exactly its parent_kind; a root kind forbids a parent. This is what
+-- enforces the ≤2-level trees, and it lets the engagement view be driven by data (one section per root kind)
+-- rather than per-type templates.
 ```
 
 **Kinds for the two core types**, drafted alongside the stage vocab above:
@@ -176,11 +187,11 @@ CREATE TABLE deliverable_kinds (
 ```sql
 -- migration: two parallel ≤2-level trees — phase→milestone, dashboard→tile (collapses what were separate tables in the reference tool)
 INSERT INTO deliverable_kinds VALUES
-  ('migration', 'phase', 'Phase'), ('migration', 'milestone', 'Milestone'),
-  ('migration', 'dashboard', 'Dashboard'), ('migration', 'tile', 'Tile');
+  ('migration', 'phase', 'Phase', NULL), ('migration', 'milestone', 'Milestone', 'phase'),
+  ('migration', 'dashboard', 'Dashboard', NULL), ('migration', 'tile', 'Tile', 'dashboard');
 
 -- quickstart: flat curriculum coverage, no parent/child tree needed
-INSERT INTO deliverable_kinds VALUES ('quickstart', 'module', 'Curriculum Module');
+INSERT INTO deliverable_kinds VALUES ('quickstart', 'module', 'Curriculum Module', NULL);
 ```
 
 ```sql
@@ -627,11 +638,7 @@ The reference tool's one-invariant-per-file convention (filename = the pinned co
 
 Every v1 design item was settled as of 2026-09-24. This section holds whatever surfaces once development starts (a real design question always turns up mid-build that this document didn't anticipate). When that happens: add it here, work through it the same way as everything above, fold the resolution into §2/§3, and log the reasoning in §6 — the same loop this whole document was built from.
 
-**Surfaced during the PoC build (2026-09-24) — each has a provisional answer implemented in the PoC, awaiting Erwin's confirmation before folding into §2/§3/§6** (the owner column, `dep_state` definitions and gate stage were resolved the same day — see §6):
-
-1. **Which deliverable kind may parent which.** §3 says trees are ≤2 levels (phase→milestone, dashboard→tile) but `deliverable_kinds` has no column expressing it, so nothing stops a tile under a phase. *Provisional:* nullable `deliverable_kinds.parent_kind` (composite self-FK); NULL = root kind; a child kind requires a parent of exactly that kind, a root kind forbids one. This also lets the engagement view be driven entirely by data (sections = root kinds) rather than per-type templates.
-2. **Who can create clients/engagements and manage memberships.** §3 gates the portal *invite* action (owner/collaborator or ops/admin) and calls membership granting "an ops-side action", but doesn't say who creates Clients/Engagements. *Provisional:* ops/admin only for create-client, create-engagement, aliases/contacts, and membership management; owner/collaborator (or ops/admin) for deliverable edits and stage moves; `viewer` read-only.
-3. **Logging in as seeded/demo users.** Google-only auth means fictional seed users can't be logged into, which blocks the "log in as an analyst" demo. *Provisional:* a passcode-gated demo login (off unless `DEV_LOGIN_PASSCODE` is set) that goes through the same user-resolution path. Long-term, the admin "act as another user" impersonation noted in §2 row 16 is probably the real answer.
+**None open.** The six items surfaced during the PoC build (2026-09-24) were all resolved the same day and folded into §2/§3 — see §6.
 
 ---
 
@@ -664,3 +671,4 @@ Dated entries for traceability — why something is the way it is, in case it's 
 - **`engagements.owner_user_id` dropped — ownership lives only in `engagement_memberships` (2026-09-24)**: surfaced during the PoC, where the column and `role='owner'` memberships were two unreconciled sources of truth for the same fact. Erwin: the column was a legacy carryover from the reference tool. An engagement's owner is now its single `owner` membership (partial unique index enforces one); the rules engine's `draft_nudge` opt-in resolves against that membership instead of a column.
 - **`dep_state` definitions confirmed (2026-09-24)**: §3 had named the four states without defining them. The PoC's definitions (blocked / maybe_unblocked / waiting / clear, built from the manual flag plus blocker edges, "finished" = done or N/A) were confirmed by Erwin as-is and folded into §3 Deliverables. The load-bearing choice is that `maybe_unblocked` never auto-clears the manual flag — the same "explicit human decision" principle as elsewhere.
 - **Gate stages removed entirely (2026-09-24)**: the migration vocab drafted from the reference tool flagged `semantic_parity` as a `"gate": true` stage (don't start dashboards until the semantic layer matches the old tool). Erwin rejected the concept outright, not just its enforcement: in real projects modeling and dashboarding happen in tandem, and a gate reinforces the wrong expectation that one must wait for the other. The flag is gone from the vocab, the schema and the UI; this supersedes the "including the semantic-layer-parity gate" wording in the vocab-drafting entry above. Stages describe where an engagement is, never what work is allowed.
+- **PoC provisional answers signed off (2026-09-24)**: the three remaining PoC-surfaced items were confirmed by Erwin as implemented. (1) `deliverable_kinds.parent_kind` is the mechanism for the ≤2-level trees (§3 Deliverables). (2) The permission model: ops/admin create clients/engagements and manage memberships; owner/collaborator (or ops/admin) edit deliverables and stages; viewer is read-only; invisible means 404 (§3 Identity & access). (3) The passcode-gated demo login stays as the way to demo seeded users until admin impersonation exists (§2 row 16). §5 is empty again.
