@@ -684,7 +684,14 @@ Every v1 design item was settled as of 2026-09-24. This section holds whatever s
 
 The six items surfaced during the PoC build (2026-09-24) were all resolved the same day and folded into §2/§3 — see §6.
 
-Items raised during the post-PoC iterations (concurrent stages, the portal slice) were resolved and folded into §3 — see §6. **None open.**
+Items raised during the post-PoC iterations (concurrent stages, the portal slice) were resolved and folded into §3 — see §6.
+
+**Open (raised 2026-09-25): CRM slice and module-based access.** Erwin asked to add opportunities, products and $ amounts on the same Clients, with a pipeline board and a forecasting board, and asked how access should work, since users need any combination of areas ("opptys", "team", "engagements", …). Proposal under discussion, not yet signed off:
+- **Access has two independent axes.** *Module access* says which areas of the app a user can enter. *Record access* says which records inside a module they can see; engagements keep `engagement_memberships` for this. A "sales" membership role would mix the two up, so it's rejected.
+- **Module access via roles, not per-user toggles.** A `modules` registry, plus named `access_roles` that grant a level (`use` | `manage`) per module. Users hold any number of roles, and their effective access is the union, so every combination works and a new module is one registry row plus grants. `manage` is today's ops power scoped to one module: see every record, create, manage the team. `admin` stays a bypass and is the only one that edits roles. Ops becomes a seeded role with `manage` everywhere; analyst becomes `engagements:use`. Contractor is an employment fact, not an access level, so it becomes a user flag that the client-invite rule reads.
+- **CRM tables.** `opportunity_stages` holds a configurable pipeline with a default probability, a forecast category, and closed/won flags. `opportunities` belong to a client and carry an owner, a stage, overridable probability and forecast category, a close date, and a lost reason. `products` carry a pricing model (fixed bid, T&M, retainer) and the engagement type they deliver as. `opportunity_line_items` hold quantity × unit price, with at least one per opportunity, enforced in the service layer. The amount is derived from the line items and never stored. Prospects are ordinary `clients` rows.
+- **Boards.** The pipeline board uses stage columns with $ totals, the CRM convention and a deliberate exception to the engagement boards, since a sales stage is linear. The forecast board shows close-date periods × forecast category, raw and weighted, per owner. Pipeline movement is read from `events`.
+- **Still to decide:** whether reps see each other's pipeline; quotas now or later; single currency; a closed-won → create-engagement bridge; minimal stage exit rules; the default stage list.
 
 ---
 
