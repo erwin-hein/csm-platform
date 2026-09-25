@@ -126,7 +126,7 @@ def seed(db: Session) -> None:
 
     # ---------------- QuickStart engagements
     nw_qs = E.create_engagement(db, admin, client_id=northwind.id, type_key="quickstart",
-                                name="Northwind QuickStart — 2026")
+                                name="Northwind QuickStart — 2026", started_on=_d(-45))
     E.change_stage(db, admin, nw_qs.id, stage="dev_training")
     E.change_stage(db, admin, nw_qs.id, stage="codev")
     M.assign_member(db, admin, nw_qs.id, user_id=priya.id, role="owner")
@@ -137,21 +137,21 @@ def seed(db: Session) -> None:
     D.add_note(db, priya, nw_mods[2].id, body="Leo built two workbooks on his own in co-dev — sent for Dana's review.")
 
     cobalt_qs = E.create_engagement(db, admin, client_id=cobalt.id, type_key="quickstart",
-                                    name="Cobalt QuickStart — Store Ops")
+                                    name="Cobalt QuickStart — Store Ops", started_on=_d(-20))
     E.change_stage(db, admin, cobalt_qs.id, stage="dev_training")
     M.assign_member(db, admin, cobalt_qs.id, user_id=tomas.id, role="owner")
     seed_quickstart(db, admin, cobalt_qs.id, {0: "done", 1: "in_progress"}, assignee=tomas.id,
                     blocked={1: "Client's dbt project not yet connected — waiting on their IT to grant warehouse access"})
 
     meridian_qs = E.create_engagement(db, admin, client_id=meridian.id, type_key="quickstart",
-                                      name="Meridian QuickStart")
+                                      name="Meridian QuickStart", started_on=_d(-6))
     M.assign_member(db, admin, meridian_qs.id, user_id=aisha.id, role="owner")
     M.assign_member(db, admin, meridian_qs.id, user_id=priya.id, role="viewer")
     seed_quickstart(db, admin, meridian_qs.id, {0: "in_progress"}, assignee=aisha.id)
 
     # a completed one, for history (hidden from boards by default)
     nw_old = E.create_engagement(db, admin, client_id=northwind.id, type_key="quickstart",
-                                 name="Northwind QuickStart pilot — 2025")
+                                 name="Northwind QuickStart pilot — 2025", started_on=_d(-410))
     for stage in ("dev_training", "codev", "creator_training", "wrapup", "handed_off"):
         E.change_stage(db, admin, nw_old.id, stage=stage)
     E.change_status(db, admin, nw_old.id, status="complete")
@@ -160,7 +160,7 @@ def seed(db: Session) -> None:
 
     # ---------------- Migration engagements
     bf = E.create_engagement(db, admin, client_id=bluefin.id, type_key="migration",
-                             name="Bluefin Tableau → Omni Migration")
+                             name="Bluefin Tableau → Omni Migration", started_on=_d(-96))
     M.assign_member(db, admin, bf.id, user_id=tomas.id, role="owner")
     M.assign_member(db, admin, bf.id, user_id=priya.id, role="collaborator")
     bfx = seed_migration(db, admin, bf.id, {
@@ -241,7 +241,7 @@ def seed(db: Session) -> None:
     D.add_note(db, tomas, readm.id, body="Other 96 tiles are straightforward ports; only these two need real work.")
 
     cb_mig = E.create_engagement(db, admin, client_id=cobalt.id, type_key="migration",
-                                 name="Cobalt Looker → Omni Migration")
+                                 name="Cobalt Looker → Omni Migration", started_on=_d(-63))
     M.assign_member(db, admin, cb_mig.id, user_id=priya.id, role="owner")
     M.assign_member(db, admin, cb_mig.id, user_id=aisha.id, role="collaborator")
     cbx = seed_migration(db, admin, cb_mig.id, {
@@ -266,7 +266,7 @@ def seed(db: Session) -> None:
 
     # Deliberately left with NO memberships — assign someone to it live in the demo.
     hp = E.create_engagement(db, admin, client_id=harbor.id, type_key="migration",
-                             name="Harbor & Pine Power BI → Omni Migration")
+                             name="Harbor & Pine Power BI → Omni Migration", started_on=_d(-9))
     seed_migration(db, admin, hp.id, {
         "phases": [("Scoping", "in_progress", [("Report inventory", "in_progress"), ("Scope sign-off", "not_started")]),
                    ("Access & Setup", "not_started", [])],

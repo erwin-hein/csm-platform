@@ -11,6 +11,8 @@
       {% for c in clients %}<option value="{{ c.id }}" {{ 'selected' if c.id|string == selected_client_id }}>{{ c.name }}</option>{% endfor %}
     </select></label>
   <label class="field"><span>Name</span><input type="text" name="name" required placeholder="e.g. Omni Migration — 2026"></label>
+  <label class="field" style="max-width:220px"><span>Start date</span><input type="date" name="started_on">
+    <div class="help">Leave empty for today. Set it when entering an engagement that's already under way.</div></label>
   <div class="field"><span class="small muted" style="font-weight:600">Engagement type</span>
     <div class="type-choice" style="margin-top:6px">
       {% for t in types %}
