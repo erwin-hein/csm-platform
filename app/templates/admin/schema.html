@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Schema explorer{% endblock %}
+{% block main_class %}full{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/schema.css">
+<div class="sx-bar">
+  <div>
+    <h1>Schema explorer <span class="sx-demo-tag">PoC demo · admin only</span></h1>
+    <div class="small muted">{{ built_count }} tables live in Postgres · {{ planned_count }} more designed in CLAUDE.md §3, not built yet. Structure comes from the database itself; comments and sections from the spec.</div>
+    <div class="sx-legend small">
+      <span><i class="lg pk"></i> primary key</span><span><i class="lg fk"></i> foreign key</span>
+      <span><i class="lg spec"></i> in the spec, not built</span><span><i class="lg sup"></i> superseded in the spec</span>
+      <span><i class="lg poc"></i> PoC addition</span><span><i class="lg planned"></i> planned table</span>
+    </div>
+  </div>
+  <div class="sx-controls">
+    <input type="search" id="sx-search" placeholder="Find a table or column…" aria-label="Find a table or column">
+    <label class="sx-toggle"><input type="checkbox" id="sx-planned"> Show planned</label>
+    <label class="sx-toggle"><input type="checkbox" id="sx-compact"> Keys only</label>
+    <button class="btn small" type="button" id="sx-fit" title="Fit everything in view">Fit</button>
+    <button class="btn small" type="button" id="sx-reset" title="Put every table back where the layout puts it">Reset layout</button>
+  </div>
+</div>
+<div class="sx-main">
+  <div id="sx-viewport" tabindex="0" aria-label="Schema diagram: drag to pan, scroll to zoom, click a table for details">
+    <div id="sx-world">
+      <svg id="sx-edges" width="8000" height="6000" aria-hidden="true">
+        <defs>
+          <marker id="sx-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="sx-arrowhead"/></marker>
+          <marker id="sx-arrow-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="sx-arrowhead hot"/></marker>
+        </defs>
+        <g id="sx-edge-layer"></g>
+      </svg>
+      <div id="sx-sections"></div>
+      <div id="sx-cards"></div>
+    </div>
+    <div class="sx-hint small">Drag to pan · scroll to zoom · drag a table by its name · click for details · Esc to clear</div>
+  </div>
+  <aside id="sx-panel" aria-live="polite"></aside>
+</div>
+<script type="application/json" id="sx-data">{{ schema | tojson }}</script>
+<script src="/static/schema.js"></script>
+{% endblock %}

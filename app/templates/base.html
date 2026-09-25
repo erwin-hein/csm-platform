@@ -43,6 +43,7 @@
     {% endif %}
     {% if user.is_admin %}
     <a href="/admin/access" class="{{ 'active' if nav == 'access' }}">Access</a>
+    <a href="/admin/schema" class="{{ 'active' if nav == 'schema' }}" title="PoC demo aid" hx-boost="false">Schema</a>
     {% endif %}
   </nav>
   <div class="me">

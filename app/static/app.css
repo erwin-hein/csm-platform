@@ -427,3 +427,4 @@ tr.on td { background: #eef3fd; }
 .access-matrix select.lvl { font-size: 12px; }
 .access-matrix select.lvl-manage { background: #e8eefc; font-weight: 600; }
 .access-matrix select.lvl-use { background: #f3f6fb; }
+main.full { max-width: none; padding: 16px 20px 0; }

@@ -7,7 +7,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
 from app.errors import ServiceError
-from app.web import admin, auth, crm, pages, portal
+from app.web import admin, auth, crm, pages, portal, schema
 from app.web.csrf import OriginCheckMiddleware
 from app.web.templating import is_htmx, render
 
@@ -24,6 +24,7 @@ app.include_router(pages.router)
 app.include_router(portal.router)
 app.include_router(crm.router)
 app.include_router(admin.router)
+app.include_router(schema.router)
 
 
 @app.get("/healthz")
