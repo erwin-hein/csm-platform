@@ -47,4 +47,5 @@ def test_board_page_has_controls_and_no_type_switcher(http, world):
     page = login(http, world.admin.email).get("/board/quickstart?group=client&sort=alpha").text
     assert 'name="group"' in page and 'name="sort"' in page
     assert "type-tabs" not in page
+    assert "type-badge" not in page   # the board is already per type; no QuickStart/Migration pill on cards
     assert page.index("Acme Corp") < page.index("Globex")

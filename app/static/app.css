@@ -343,7 +343,8 @@ button.step:hover:not(.st-active) { border-color: var(--accent); }
 .bcard:hover { text-decoration: none; box-shadow: 0 6px 20px rgba(20,26,38,.08); border-color: #cfd5de; }
 .bcard.accent-quickstart { border-top-color: var(--qs); }
 .bcard.accent-migration { border-top-color: var(--mig); }
-.bcard-client { font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); margin-top: 2px; }
+.bcard-top { align-items: center; min-height: 24px; }
+.bcard-client { font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
 .bcard-name { font-size: 17px; font-weight: 700; line-height: 1.25; margin-top: -4px; }
 .bcard-stages { display: flex; gap: 5px; flex-wrap: wrap; min-height: 20px; }
 .stage-chip { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--mig-soft); color: var(--mig); }
