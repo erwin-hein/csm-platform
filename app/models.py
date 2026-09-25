@@ -34,6 +34,9 @@ ENGAGEMENT_STATUSES = ["active", "paused", "complete", "cancelled"]
 USER_TYPES = ["internal", "client_external"]
 INTERNAL_ROLES = ["analyst", "contractor", "ops", "admin"]
 MEMBERSHIP_ROLES = ["owner", "collaborator", "viewer"]
+VIEWER_SCOPES = ["full", "assigned_only"]
+REVIEW_VERDICTS = ["accepted", "blocked", "rejected"]
+UAT_STATUS = "external_validation"  # client review verdicts can only be given while a deliverable is in UAT
 
 
 class Base(DeclarativeBase):
@@ -93,6 +96,9 @@ class EngagementMembership(Base):
     )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True)
     role: Mapped[str] = mapped_column(Enum(*MEMBERSHIP_ROLES, name="membership_role"), nullable=False)
+    # Only meaningful for client_external viewers (CLAUDE.md §3 Portal): 'full' = project lead,
+    # 'assigned_only' = sees only deliverables they're client owner of (plus parents, for context).
+    viewer_scope: Mapped[str] = mapped_column(Text, server_default="full", default="full")
 
     user: Mapped[User] = relationship(lazy="joined")
     engagement: Mapped["Engagement"] = relationship(back_populates="memberships")
@@ -147,8 +153,16 @@ class EngagementType(Base):
     display_name: Mapped[str | None] = mapped_column(Text)
     storage_mode: Mapped[str] = mapped_column(Text, nullable=False)
     stage_vocab: Mapped[list[dict]] = mapped_column(JSONB, nullable=False)
+    # The deliverable kind that stands for this type's stages (migration → phase). When set,
+    # stage state is derived from those deliverables and several stages can be active at
+    # once; when NULL (quickstart), the engagement's stage is set by hand.
+    stage_kind: Mapped[str | None] = mapped_column(Text)
 
     kinds: Mapped[list["DeliverableKind"]] = relationship(order_by="DeliverableKind.kind")
+
+    @property
+    def stages_derived(self) -> bool:
+        return self.stage_kind is not None
 
     @property
     def stage_keys(self) -> list[str]:
@@ -176,7 +190,8 @@ class Engagement(Base):
     client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"))
     type_key: Mapped[str] = mapped_column(Text, ForeignKey("engagement_types.key"))
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    stage: Mapped[str] = mapped_column(Text, nullable=False)
+    # Hand-set stage, only for types whose stages aren't derived (stage_kind IS NULL); NULL otherwise.
+    stage: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, server_default="active", default="active")
     # The next five columns are part of the §3 table but belong to features outside the
     # PoC (Slack, Harvest, health). They exist in the schema; nothing reads or writes them.
@@ -204,13 +219,18 @@ class Engagement(Base):
         return next((m.user for m in self.memberships if m.role == "owner"), None)
 
     @property
-    def stage_label(self) -> str:
-        return self.type.stage_label(self.stage)
+    def stage_states(self) -> list:
+        """Per-stage state (done / active / upcoming / empty), for either kind of type."""
+        from sqlalchemy.orm import object_session
+
+        from app.services.stages import derive_stage_states
+        return derive_stage_states(object_session(self), self)
 
     @property
-    def stage_index(self) -> int:
-        keys = self.type.stage_keys
-        return keys.index(self.stage) if self.stage in keys else -1
+    def stage_label(self) -> str:
+        """The active stage(s), e.g. 'Semantic-layer Parity + Dashboard Build'."""
+        from app.services.stages import derive_stage_label
+        return derive_stage_label(self.stage_states)
 
 
 # ---------------------------------------------------------------- deliverables
@@ -232,6 +252,12 @@ class DeliverableKind(Base):
     kind: Mapped[str] = mapped_column(Text, primary_key=True)
     display_name: Mapped[str | None] = mapped_column(Text)
     parent_kind: Mapped[str | None] = mapped_column(Text)
+    # Whether client_external users can ever see deliverables of this kind. A type with no
+    # client-visible kinds has no client view at all.
+    client_visible: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
+    # Parents of this kind (e.g. dashboard) may track most of their children as per-status
+    # counts instead of listing every one (deliverables.child_counts).
+    bulk_child_counts: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
 
 
 class Deliverable(Base):
@@ -269,6 +295,10 @@ class Deliverable(Base):
     priority: Mapped[str | None] = mapped_column(Text)
     target_date: Mapped[date | None] = mapped_column(Date)
     hours_estimated: Mapped[Decimal | None] = mapped_column(Numeric)
+    # For stage-kind deliverables (e.g. migration phases): the stage this one stands for.
+    stage_key: Mapped[str | None] = mapped_column(Text)
+    # For bulk-count parents: {pipeline_status: n} for children that aren't listed individually.
+    child_counts: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = _created_at()
 
     engagement: Mapped[Engagement] = relationship(
@@ -277,6 +307,7 @@ class Deliverable(Base):
     parent: Mapped["Deliverable | None"] = relationship(remote_side="Deliverable.id", back_populates="children")
     children: Mapped[list["Deliverable"]] = relationship(back_populates="parent", order_by="Deliverable.created_at")
     internal_assignee: Mapped[User | None] = relationship(foreign_keys=[internal_assignee_user_id])
+    client_owner: Mapped[User | None] = relationship(foreign_keys=[client_owner_user_id])
     activity: Mapped[list["DeliverableActivity"]] = relationship(
         order_by="DeliverableActivity.created_at.desc()"
     )
@@ -301,6 +332,38 @@ class DeliverableActivity(Base):
     created_at: Mapped[datetime] = _created_at()
 
     actor: Mapped[User | None] = relationship()
+
+
+class DeliverableComment(Base):
+    """The client-facing thread. Structurally separate from deliverable_activity (internal
+    notes), so internal chatter can't leak to a client through a mis-set flag."""
+
+    __tablename__ = "deliverable_comments"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    deliverable_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("deliverables.id"))
+    author_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
+
+    author: Mapped[User] = relationship()
+
+
+class DeliverableClientReview(Base):
+    """Append-only verdict history; the current verdict is the latest row."""
+
+    __tablename__ = "deliverable_client_reviews"
+    __table_args__ = (
+        CheckConstraint("verdict IN ('accepted','blocked','rejected')", name="ck_deliverable_client_reviews_verdict"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    deliverable_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("deliverables.id"))
+    reviewer_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    verdict: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
+
+    reviewer: Mapped[User] = relationship()
 
 
 # ---------------------------------------------------------------- events — the spine

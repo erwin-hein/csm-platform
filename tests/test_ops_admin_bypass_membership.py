@@ -10,7 +10,7 @@ def test_admin_and_ops_see_everything_without_membership(db, world):
 
 
 def test_admin_can_act_without_membership(db, world):
-    d = deliverables.create_deliverable(db, world.ops, world.alice_eng.id, kind="phase", name="Ops-created")
+    d = deliverables.create_deliverable(db, world.ops, world.alice_eng.id, kind="phase", name="Ops-created", stage_key="scoping")
     assert d.engagement_id == world.alice_eng.id
 
 

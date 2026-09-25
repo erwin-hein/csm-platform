@@ -11,10 +11,10 @@ from sqlalchemy import select
 import app.services
 from app.events import MUTATIONS, mutation
 from app.models import Event
-from app.services import clients, deliverables, engagements, memberships, users
+from app.services import client_portal, clients, deliverables, engagements, memberships, users
 
 READ_PREFIXES = ("get_", "list_", "derive_", "kinds_for_", "blocker_", "blocking_", "engagement_", "parent_",
-                 "is_allowed_")
+                 "is_allowed_", "can_")
 # Not a mutation itself: delegates to create_internal_user (which is) only on first login.
 EXEMPT = {"app.services.users.login_or_bootstrap"}
 
@@ -61,34 +61,46 @@ def test_each_mutation_writes_its_event_row(db, world):
     c = run(clients.create_client, a, name="Initech")
     run(clients.add_alias, a, c.id, alias="ITC", alias_type="acronym")
     run(clients.add_contact, a, c.id, name="Bill")
+    qs = engagements.create_engagement(db, a, client_id=c.id, type_key="quickstart", name="Initech QS")
+    run(engagements.change_stage, a, qs.id, stage="dev_training")
     e = run(engagements.create_engagement, a, client_id=c.id, type_key="migration", name="Initech Migration")
-    run(engagements.change_stage, a, e.id, stage="access_setup")
     run(engagements.change_status, a, e.id, status="paused")
     run(memberships.assign_member, a, e.id, user_id=world.alice.id, role="owner")
     run(memberships.remove_member, a, e.id, user_id=world.alice.id)
-    p1 = run(deliverables.create_deliverable, a, e.id, kind="phase", name="P1")
-    p2 = run(deliverables.create_deliverable, a, e.id, kind="phase", name="P2")
+    p1 = run(deliverables.create_deliverable, a, e.id, kind="phase", name="P1", stage_key="scoping")
+    p2 = run(deliverables.create_deliverable, a, e.id, kind="phase", name="P2", stage_key="scoping")
     run(deliverables.update_deliverable, a, p1.id, pipeline_status="in_progress")
     run(deliverables.add_note, a, p1.id, body="note")
     run(deliverables.add_blocker, a, p2.id, blocker_id=p1.id)
+    counted = deliverables.create_deliverable(db, a, e.id, kind="dashboard", name="Counted", child_count=10)
+    run(deliverables.set_child_counts, a, counted.id, counts={"done": 4, "not_started": 6})
     run(deliverables.remove_blocker, a, p2.id, blocker_id=p1.id)
+
+    contact = clients.add_contact(db, a, c.id, name="Carla Client", email="carla@initech.com")
+    m = run(client_portal.invite_client_contact, a, e.id, contact_id=contact.id, viewer_scope="full")
+    run(client_portal.set_client_scope, a, e.id, user_id=m.user_id, viewer_scope="assigned_only")
+    dash = deliverables.create_deliverable(db, a, e.id, kind="dashboard", name="Dash")
+    deliverables.update_deliverable(db, a, dash.id, client_owner_user_id=m.user_id, pipeline_status="external_validation")
+    run(client_portal.add_client_comment, a, dash.id, body="Ready for review")
+    run(client_portal.submit_review, m.user, dash.id, verdict="accepted")
+    run(client_portal.revoke_client_access, a, e.id, user_id=m.user_id)
 
     assert exercised == set(MUTATIONS), f"Add a case for: {set(MUTATIONS) - exercised}"
 
 
 def test_event_carries_actor_and_entity(db, world):
-    e = engagements.change_stage(db, world.admin, world.alice_eng.id, stage="access_setup")
+    e = engagements.change_stage(db, world.admin, world.bob_eng.id, stage="dev_training")
     ev = db.scalar(select(Event).where(Event.event_type == "stage_changed").order_by(Event.id.desc()))
     assert ev.entity_type == "engagement" and ev.entity_id == e.id
     assert ev.actor_user_id == world.admin.id
-    assert ev.payload == {"from": "scoping", "to": "access_setup"}
+    assert ev.payload == {"from": "kickoff", "to": "dev_training"}
 
 
 def test_emit_is_in_same_transaction_as_the_write(db, world):
     """A failed request rolls back both the mutation and its event."""
     sp = db.begin_nested()
-    engagements.change_stage(db, world.admin, world.alice_eng.id, stage="access_setup")
+    engagements.change_stage(db, world.admin, world.bob_eng.id, stage="dev_training")
     sp.rollback()
     assert db.scalar(select(Event).where(Event.event_type == "stage_changed")) is None
-    db.refresh(world.alice_eng)
-    assert world.alice_eng.stage == "scoping"
+    db.refresh(world.bob_eng)
+    assert world.bob_eng.stage == "kickoff"

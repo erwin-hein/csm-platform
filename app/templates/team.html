@@ -2,10 +2,7 @@
 {% from "macros.html" import type_badge, initials, eng_status %}
 {% block title %}Team assignment{% endblock %}
 {% block content %}
-<div class="spread" style="margin-bottom:16px">
-  <div><h1>Team assignment</h1>
-    <div class="muted">Who can see and work on each engagement. Analysts and contractors see only what they're assigned here; ops and admin see everything.</div></div>
-</div>
+{% set tab = "engagements" %}{% include "partials/team_tabs.html" %}
 <div class="grid two">
   <div class="card flush">
     <table>

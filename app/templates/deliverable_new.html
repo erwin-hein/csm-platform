@@ -18,6 +18,20 @@
     </select>
     <div class="help">Required for child kinds, not allowed for top-level ones — enforced server-side.</div></label>
   <label class="field"><span>Name</span><input type="text" name="name" required autofocus></label>
+  {% if engagement.type.stage_kind %}
+  <label class="field" id="stage-field" data-for-kind="{{ engagement.type.stage_kind }}"><span>Stage this {{ engagement.type.stage_kind }} stands for</span>
+    <select name="stage_key">
+      <option value="">— pick a stage —</option>
+      {% for s in engagement.type.stage_vocab %}<option value="{{ s.key }}">{{ s.label }}</option>{% endfor %}
+    </select>
+    <div class="help">The engagement's stages follow these: a stage is active while any of its {{ engagement.type.stage_kind }}s is under way, and several can be active at once.</div></label>
+  {% endif %}
+  {% set bulk = kinds | selectattr('bulk_child_counts') | list %}
+  {% for k in bulk %}
+  <label class="field bulk-field" data-for-kind="{{ k.kind }}"><span>How many {{ (kinds | selectattr('parent_kind', 'equalto', k.kind) | first).display_name | lower }}s does it have? (optional)</span>
+    <input type="number" name="child_count" min="0" step="1" placeholder="e.g. 99">
+    <div class="help">Tracked by count. You only need to list the ones worth singling out; each one you list comes out of this count.</div></label>
+  {% endfor %}
   <div class="grid" style="grid-template-columns: 1fr 1fr">
     <label class="field"><span>Internal assignee</span>
       <select name="assignee_id"><option value="">— unassigned —</option>
@@ -47,6 +61,11 @@
       for (const o of parent.options) { if (o.dataset.forKind) o.hidden = o.dataset.forKind !== kind.value; }
       if (!pk) parent.value = '';
       else if (parent.selectedOptions[0] && parent.selectedOptions[0].hidden) parent.value = '';
+      document.querySelectorAll('label[data-for-kind]').forEach(el => {
+        const show = el.dataset.forKind === kind.value;
+        el.style.display = show ? '' : 'none';
+        el.querySelectorAll('input, select').forEach(i => { i.disabled = !show; });
+      });
     }
     kind.addEventListener('change', sync); sync();
   })();

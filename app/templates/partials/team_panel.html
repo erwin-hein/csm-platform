@@ -1,7 +1,7 @@
 {% from "macros.html" import initials %}
 {% set e = team.engagement %}
 <div id="team-{{ e.id }}" class="{{ '' if compact else 'card' }}">
-  {% if not compact %}<div class="spread"><h2 style="margin:0">Team</h2>{% if team.can_manage %}<a class="small" href="/team">All assignments →</a>{% endif %}</div>
+  {% if not compact %}<div class="spread"><h2 style="margin:0">Team</h2>{% if team.can_manage %}<a class="small" href="/team">Team capacity →</a>{% endif %}</div>
   <p class="small muted" style="margin:4px 0 8px">Membership is what grants analysts visibility into this engagement.</p>{% endif %}
   <ul class="team-list">
     {% for m in team.members %}

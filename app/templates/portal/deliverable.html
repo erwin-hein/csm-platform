@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% from "portal/macros.html" import verdict_chip, client_status %}
+{% block title %}{{ d.name }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/portal">Your projects</a> › <a href="/portal/engagements/{{ engagement.id }}">{{ engagement.name }}</a> ›</div>
+<div class="spread" style="margin-bottom:14px">
+  <div><h1>{{ d.name }}</h1>
+    <div class="row">{{ client_status(d) }} {{ verdict_chip(reviews[0] if reviews else None) }}
+      {% if d.target_date %}<span class="small muted">Target {{ d.target_date.strftime('%b %d, %Y') }}</span>{% endif %}
+      {% if d.client_owner %}<span class="small muted">Owner on your side: {{ d.client_owner.label }}</span>{% endif %}</div></div>
+</div>
+<div class="grid two">
+  <div class="stack">
+    {% if d.blocked %}<div class="card dep-box lvl-alert"><b>Blocked</b><div class="small">{{ d.blocked_reason }}</div></div>{% endif %}
+
+    <div class="card" id="thread">
+      <h2>Comments</h2>
+      <div class="small muted" style="margin:-6px 0 10px">Shared between your team and Shearwater.</div>
+      <ol class="chat-log portal-thread">
+        {% for c in comments %}
+        <li class="chat-msg {{ 'mine' if c.author_user_id == user.id }}">
+          <div class="chat-meta"><b>{{ c.author.label }}</b>{% if c.author.user_type == 'internal' %} · Shearwater{% endif %} · {{ c.created_at.strftime('%b %d, %H:%M') }}</div>
+          <div class="chat-bubble">{{ c.body }}</div>
+        </li>
+        {% else %}<li class="chat-event muted">No comments yet.</li>{% endfor %}
+      </ol>
+      <form method="post" action="/portal/deliverables/{{ d.id }}/comments">
+        <textarea name="body" placeholder="Write a comment…" required></textarea>
+        <button class="btn primary small" type="submit" style="margin-top:6px">Post comment</button>
+      </form>
+    </div>
+
+    {% if children %}
+    <div class="card flush">
+      <div class="section-head"><h2 style="margin:0">Included items</h2></div>
+      <div class="p-list">{% for i in children %}{% set c = i.deliverable %}
+        <div class="p-item"><div class="p-main"><a class="p-name" href="/portal/deliverables/{{ c.id }}">{{ c.name }}</a>{% if i.owned %}<span class="owned-tag">You own this</span>{% endif %}</div>
+          <div class="p-meta">{{ client_status(c) }} {{ verdict_chip(i.verdict) }}</div></div>{% endfor %}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <h2>Your review</h2>
+      {% if can_review %}
+      <p class="small muted" style="margin-top:-4px">This is in UAT. Your verdict goes to the Shearwater team; they decide next steps.</p>
+      <form method="post" action="/portal/deliverables/{{ d.id }}/review">
+        <textarea name="comment" placeholder="Optional note to go with your verdict (posted to the comments)"></textarea>
+        <div class="verdict-buttons">
+          <button class="btn v-accepted" name="verdict" value="accepted">✓ Accept</button>
+          <button class="btn v-blocked" name="verdict" value="blocked">⏸ Blocked</button>
+          <button class="btn v-rejected" name="verdict" value="rejected">✕ Reject</button>
+        </div>
+      </form>
+      {% elif is_reviewer %}
+      <p class="small muted">Verdicts open once this is in UAT (<i>{{ status_labels[uat_status] }}</i>). You can comment any time.</p>
+      {% else %}
+      <p class="small muted">This item is reviewed by its owner or your project lead. You can still comment.</p>
+      {% endif %}
+      {% if reviews %}
+      <h3 style="margin-top:14px">History</h3>
+      <ul class="activity">{% for r in reviews %}
+        <li class="small">{{ verdict_chip(r) }} <b>{{ r.reviewer.label }}</b> <span class="muted">· {{ r.created_at.strftime('%b %d, %H:%M') }}</span></li>{% endfor %}</ul>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

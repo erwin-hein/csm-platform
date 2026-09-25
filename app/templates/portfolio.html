@@ -14,6 +14,10 @@
   <div class="row"><a class="btn primary" href="/clients/new">+ Add Client</a><a class="btn" href="/engagements/new">+ Add Engagement</a></div>
   {% endif %}
 </div>
+<div class="small muted" style="margin:-8px 0 16px">
+  {% if show_closed %}Showing completed and cancelled engagements. <a href="/">Hide them</a>
+  {% elif hidden_total %}{{ hidden_total }} completed/cancelled engagement{{ 's' if hidden_total != 1 }} hidden. <a href="/?show_closed=true">Show</a>{% endif %}
+</div>
 
 {% for client in clients %}
 <section class="client-block">
@@ -28,12 +32,12 @@
       <div>{{ type_badge(e.type) }}</div>
       <div class="name"><a href="/engagements/{{ e.id }}">{{ e.name }}</a> {{ eng_status(e.status) }}
         <div>{{ kind_mix(s.kind_counts) }}</div></div>
-      <div><div class="small"><b>{{ e.stage_label }}</b> <span class="muted">· stage {{ e.stage_index + 1 }} of {{ e.type.stage_vocab | length }}</span></div>{{ stepper(e, mini=True) }}</div>
+      <div><div class="small"><b>{{ e.stage_label }}</b></div>{{ stepper(e, mini=True) }}</div>
       <div>{{ progress_bar(s.progress) }}<div style="margin-top:4px">{{ progress_text(s.progress) }}</div></div>
       <div class="small">{% if e.owner %}{{ e.owner.label }}{% else %}<span class="warn-tag">No owner</span>{% endif %}</div>
     </div>
     {% else %}
-    <div class="empty">No engagements yet.</div>
+    <div class="empty">{% if hidden[client.id] %}No open engagements ({{ hidden[client.id] }} completed/cancelled hidden).{% else %}No engagements yet.{% endif %}</div>
     {% endfor %}
   </div>
 </section>

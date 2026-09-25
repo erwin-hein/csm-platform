@@ -1,0 +1,36 @@
+{# Shared by the portal and the internal "Client view" tab. Needs: sections, link_prefix (optional). #}
+{% from "portal/macros.html" import verdict_chip, client_status %}
+{% set link_prefix = link_prefix | default('/portal/deliverables/') %}
+{% macro row(i, child=False) -%}{% set d = i.deliverable %}
+<div class="p-item {{ 'p-child' if child }} {{ 'p-review' if i.can_review }}">
+  <div class="p-main">
+    <a class="p-name" href="{{ link_prefix }}{{ d.id }}">{{ d.name }}</a>
+    {% if i.owned %}<span class="owned-tag">You own this</span>{% endif %}
+    {% if d.blocked %}<span class="sig sig-alert" title="{{ d.blocked_reason }}">Blocked</span>{% endif %}
+  </div>
+  <div class="p-meta">
+    {{ client_status(d) }}
+    {% if d.target_date %}<span class="small muted">Target {{ d.target_date.strftime('%b %d') }}</span>{% endif %}
+    {{ verdict_chip(i.verdict) }}
+    {% if i.can_review %}<a class="btn small primary" href="{{ link_prefix }}{{ d.id }}">Review</a>{% endif %}
+    <a class="chat-btn" href="{{ link_prefix }}{{ d.id }}#thread" title="Comments">💬{% if i.comment_count %}<span class="chat-count">{{ i.comment_count }}</span>{% endif %}</a>
+  </div>
+</div>
+{% if d.blocked and d.blocked_reason %}<div class="p-reason {{ 'p-child' if child }}">{{ d.blocked_reason }}</div>{% endif %}
+{% if i.counted and (membership is not defined or membership.viewer_scope == 'full') %}{% set listed = i.children | length %}
+<div class="p-counts">{{ listed + (i.counted.values() | sum) }} items in total{% if listed %} ({{ listed }} listed below){% endif %} ·
+  {% for s, n in i.counted.items() %}{{ n }} {{ status_labels[s] | lower }}{{ ', ' if not loop.last }}{% endfor %} among the rest</div>{% endif %}
+{%- endmacro %}
+{% for s in sections %}
+<div class="card flush" style="margin-bottom:16px">
+  <div class="section-head"><h2 style="margin:0">{{ s.kind.display_name }}s</h2><span class="small muted">{{ s.done }}/{{ s.total }} done</span></div>
+  <div class="p-list">
+    {% for i in s.items %}
+      {{ row(i) }}
+      {% for c in i.children %}{{ row(c, True) }}{% endfor %}
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="card empty">Nothing has been shared with you on this project yet.</div>
+{% endfor %}

@@ -12,7 +12,7 @@ from tests.conftest import login
 
 @pytest.fixture
 def setup(db, world):
-    phase = deliverables.create_deliverable(db, world.admin, world.alice_eng.id, kind="phase", name="Secret phase")
+    phase = deliverables.create_deliverable(db, world.admin, world.alice_eng.id, kind="phase", name="Secret phase", stage_key="scoping")
     milestone = deliverables.create_deliverable(db, world.admin, world.alice_eng.id, kind="milestone",
                                                 name="Secret milestone", parent_id=phase.id)
     module = deliverables.create_deliverable(db, world.admin, world.bob_eng.id, kind="module", name="Bob's module")
@@ -38,7 +38,7 @@ def test_service_writes_refuse_non_member(db, setup):
     w, phase, milestone, _ = setup
     before = _event_count(db)
     with pytest.raises(NotFound):
-        deliverables.create_deliverable(db, w.bob, w.alice_eng.id, kind="phase", name="Sneaky")
+        deliverables.create_deliverable(db, w.bob, w.alice_eng.id, kind="phase", name="Sneaky", stage_key="scoping")
     with pytest.raises(NotFound):
         deliverables.update_deliverable(db, w.bob, milestone.id, pipeline_status="done")
     with pytest.raises(NotFound):
@@ -46,7 +46,7 @@ def test_service_writes_refuse_non_member(db, setup):
     with pytest.raises(NotFound):
         deliverables.add_blocker(db, w.bob, milestone.id, blocker_id=phase.id)
     with pytest.raises(NotFound):
-        engagements.change_stage(db, w.bob, w.alice_eng.id, stage="access_setup")
+        engagements.change_status(db, w.bob, w.alice_eng.id, status="paused")
     assert _event_count(db) == before
     assert db.get(Deliverable, milestone.id).pipeline_status == "not_started"
 
@@ -57,18 +57,20 @@ def test_http_non_member_gets_404_everywhere(http, db, setup):
     eid = w.alice_eng.id
 
     for path in (f"/engagements/{eid}", f"/deliverables/{milestone.id}", f"/deliverables/{phase.id}",
-                 f"/engagements/{eid}/deliverables/new"):
+                 f"/engagements/{eid}/deliverables/new", f"/engagements/{eid}/deliverables-panel",
+                 f"/deliverables/{milestone.id}/chat"):
         assert bob.get(path).status_code == 404, path
 
     before = _event_count(db)
     posts = [
         (f"/engagements/{eid}/stage", {"stage": "access_setup"}),
         (f"/engagements/{eid}/status", {"status": "paused"}),
-        (f"/engagements/{eid}/deliverables", {"kind": "phase", "name": "Sneaky"}),
+        (f"/engagements/{eid}/deliverables", {"kind": "phase", "name": "Sneaky", "stage_key": "scoping"}),
         (f"/deliverables/{milestone.id}/pipeline", {"pipeline_status": "done"}),
         (f"/deliverables/{milestone.id}/edit", {"name": "Renamed"}),
         (f"/deliverables/{milestone.id}/block", {"blocked": "true", "blocked_reason": "x"}),
         (f"/deliverables/{milestone.id}/notes", {"body": "hello"}),
+        (f"/deliverables/{milestone.id}/chat", {"body": "hello"}),
         (f"/deliverables/{milestone.id}/blockers", {"blocker_id": str(phase.id)}),
     ]
     for path, data in posts:
@@ -103,6 +105,9 @@ def test_viewer_can_see_but_not_edit(http, db, setup):
     assert r.status_code == 403
     with pytest.raises(Forbidden):
         deliverables.update_deliverable(db, w.bob, milestone.id, pipeline_status="done")
+    # ...but commenting only needs visibility, so a viewer can use the chat pop-up.
+    r = bob.post(f"/deliverables/{milestone.id}/chat", data={"body": "viewer note"}, headers={"hx-request": "true"})
+    assert r.status_code == 200 and "viewer note" in r.text and r.headers["hx-trigger"] == "notesChanged"
 
 
 def test_membership_revocation_removes_access(http, db, setup):

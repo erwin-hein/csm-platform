@@ -38,7 +38,14 @@ class LoginRequired(Exception):
     pass
 
 
-def current_user(request: Request, db: Session = Depends(get_db)) -> User:
+class WrongAudience(Exception):
+    """A signed-in user reached the other population's pages: send them to their own home."""
+
+    def __init__(self, home: str):
+        self.home = home
+
+
+def _session_user(request: Request, db: Session) -> User:
     raw = request.session.get("user_id")
     user = None
     if raw:
@@ -46,12 +53,29 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
             user = db.get(User, uuid.UUID(raw))
         except ValueError:
             user = None
-    if user is None or user.status != "active" or user.user_type != "internal":
+    if user is None or user.status != "active":
         request.session.clear()
         raise LoginRequired()
+    return user
+
+
+def current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    """Internal pages only. A client user never gets past this, whatever they hold."""
+    user = _session_user(request, db)
+    if user.user_type != "internal":
+        raise WrongAudience("/portal")
     request.state.user = user
     request.state.nav_types = [(t.key, t.display_name) for t in
                                db.scalars(select(EngagementType).order_by(EngagementType.display_name.desc()))]
+    return user
+
+
+def current_client_user(request: Request, db: Session = Depends(get_db)) -> User:
+    """Portal pages only (CLAUDE.md §3 Client-facing portal)."""
+    user = _session_user(request, db)
+    if user.user_type != "client_external":
+        raise WrongAudience("/")
+    request.state.user = user
     return user
 
 
@@ -137,7 +161,12 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
 def demo_login_page(request: Request, db: Session = Depends(get_db)):
     if not settings.dev_login_enabled:
         return RedirectResponse("/login", status_code=303)
-    return render(request, "demo_login.html", users=user_service.list_internal_users(db), error=None)
+    return _demo_page(request, db)
+
+
+def _demo_page(request: Request, db: Session, error: str | None = None, status_code: int = 200):
+    return render(request, "demo_login.html", users=user_service.list_internal_users(db),
+                  client_users=user_service.list_client_users(db), error=error, status_code=status_code)
 
 
 @router.post("/demo-login")
@@ -145,16 +174,21 @@ def demo_login(request: Request, passcode: str = Form(""), email: str = Form("")
     if not settings.dev_login_enabled:
         return RedirectResponse("/login", status_code=303)
     if not hmac.compare_digest(passcode.encode(), settings.dev_login_passcode.encode()):
-        return render(request, "demo_login.html", users=user_service.list_internal_users(db),
-                      error="Wrong demo passcode", status_code=401)
+        return _demo_page(request, db, "Wrong demo passcode", 401)
+    existing = user_service.get_user_by_email(db, email)
+    if existing and existing.user_type == "client_external":
+        # Client accounts only exist once invited; the demo login never creates them.
+        if existing.status != "active":
+            return _demo_page(request, db, "This account is not active", 400)
+        _start_session(request, existing)
+        return RedirectResponse("/portal", status_code=303)
     try:
         # Same path as Google login, so ADMIN_EMAILS bootstrap and the domain rule apply identically.
         if not user_service.is_allowed_internal_email(email):
             raise ValidationError(f"Only @{settings.allowed_domain} accounts can sign in")
         user = user_service.login_or_bootstrap(db, email=email, display_name=None)
     except ValidationError as e:
-        return render(request, "demo_login.html", users=user_service.list_internal_users(db), error=str(e),
-                      status_code=400)
+        return _demo_page(request, db, str(e), 400)
     db.commit()
     _start_session(request, user)
     return RedirectResponse("/", status_code=303)

@@ -12,8 +12,11 @@ from app.models import MEMBERSHIP_ROLES, EngagementMembership, User
 
 
 def list_members(db: Session, engagement_id: uuid.UUID) -> list[EngagementMembership]:
+    """The internal team. Client users with portal access are listed separately
+    (services.client_portal.list_client_members)."""
     order = {r: i for i, r in enumerate(MEMBERSHIP_ROLES)}
-    rows = db.scalars(select(EngagementMembership).where(EngagementMembership.engagement_id == engagement_id))
+    rows = db.scalars(select(EngagementMembership).join(User, User.id == EngagementMembership.user_id).where(
+        EngagementMembership.engagement_id == engagement_id, User.user_type == "internal"))
     return sorted(rows, key=lambda m: (order[m.role], m.user.label))
 
 

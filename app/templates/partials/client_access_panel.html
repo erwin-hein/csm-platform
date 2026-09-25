@@ -1,0 +1,38 @@
+{# Per-engagement client (portal) access. Provisioned here by admin, ops or the engagement's
+   owner, not from the Team screens, so ops isn't a bottleneck for granular client access. #}
+{% set e = ca.engagement %}
+<div id="client-access-{{ e.id }}" class="card client-card">
+  <div class="spread"><h2 style="margin:0">Client access</h2><span class="client-tag">Portal</span></div>
+  <p class="small muted" style="margin:4px 0 8px">Who at {{ e.client.name }} can see this engagement's client-visible deliverables.
+    <b>Full</b> = project lead (sees and reviews everything shared); <b>assigned only</b> = just the items they own.</p>
+  <ul class="team-list">
+    {% for m in ca.client_members %}
+    <li>
+      <div><b>{{ m.user.label }}</b><div class="small muted">{{ m.user.email }}</div></div>
+      <div class="row" style="gap:6px">
+        {% if ca.can_manage %}
+        <form class="inline" hx-post="/engagements/{{ e.id }}/client-access/{{ m.user_id }}/scope" hx-target="#client-access-{{ e.id }}" hx-swap="outerHTML">
+          <select name="viewer_scope" onchange="this.form.requestSubmit()">{% for sc in ca.scopes %}<option value="{{ sc }}" {{ 'selected' if sc == m.viewer_scope }}>{{ 'full' if sc == 'full' else 'assigned only' }}</option>{% endfor %}</select>
+        </form>
+        <form class="inline" hx-post="/engagements/{{ e.id }}/client-access/{{ m.user_id }}/remove" hx-target="#client-access-{{ e.id }}" hx-swap="outerHTML"
+              hx-confirm="Revoke {{ m.user.label }}'s portal access to {{ e.name }}?">
+          <button class="btn small danger" type="submit" title="Revoke">✕</button>
+        </form>
+        {% else %}<span class="role-chip">{{ 'full' if m.viewer_scope == 'full' else 'assigned only' }}</span>{% endif %}
+      </div>
+    </li>
+    {% else %}<li class="small muted">No client users yet.</li>{% endfor %}
+  </ul>
+  {% if ca.can_manage %}
+    {% if ca.invitable %}
+    <form class="row" style="margin-top:8px; gap:6px" hx-post="/engagements/{{ e.id }}/client-access" hx-target="#client-access-{{ e.id }}" hx-swap="outerHTML">
+      <select name="contact_id" required><option value="">+ Invite a client contact…</option>
+        {% for c in ca.invitable %}<option value="{{ c.id }}">{{ c.name }} ({{ c.email }})</option>{% endfor %}</select>
+      <select name="viewer_scope"><option value="full">full</option><option value="assigned_only">assigned only</option></select>
+      <button class="btn small" type="submit">Invite</button>
+    </form>
+    {% else %}<p class="small muted" style="margin-top:8px">Every contact with an email already has access. Add contacts on the <a href="/clients/{{ e.client.id }}">client page</a>.</p>{% endif %}
+  {% else %}
+  <p class="small muted" style="margin-top:8px">Admin, ops or the engagement's owner can change client access.</p>
+  {% endif %}
+</div>

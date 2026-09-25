@@ -2,8 +2,8 @@
 <span class="pill s-{{ status }}">{{ PIPELINE_LABELS[status] }}</span>
 {%- endmacro %}
 
-{% macro dep_pill(state) -%}
-{% if state != 'clear' %}<span class="pill d-{{ state }}">{{ DEP_STATE_LABELS[state] }}</span>{% endif %}
+{% macro dep_signal(signal) -%}
+{% if signal %}<span class="sig sig-{{ signal.level }}" title="{{ signal.detail }}">{% if signal.level == 'info' %}↳ {% endif %}{{ signal.label }}</span>{% endif %}
 {%- endmacro %}
 
 {% macro type_badge(etype) -%}
@@ -28,9 +28,8 @@
 
 {% macro stepper(engagement, mini=False) -%}
 <div class="stepper {{ engagement.type_key }}{{ ' mini' if mini }}">
-  {% set cur = engagement.stage_index %}
-  {% for s in engagement.type.stage_vocab %}
-    <div class="step {{ 'past' if loop.index0 < cur }} {{ 'current' if loop.index0 == cur }}" title="{{ s.label }}">{{ s.label }}</div>
+  {% for s in engagement.stage_states %}
+    <div class="step st-{{ s.state }}" title="{{ s.label }} · {{ s.state }}">{{ s.label }}</div>
   {% endfor %}
 </div>
 {%- endmacro %}

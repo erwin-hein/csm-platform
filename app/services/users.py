@@ -19,6 +19,11 @@ def list_internal_users(db: Session) -> list[User]:
     )
 
 
+def list_client_users(db: Session) -> list[User]:
+    return list(db.scalars(select(User).where(User.user_type == "client_external", User.status == "active")
+                           .order_by(User.display_name)))
+
+
 def is_allowed_internal_email(email: str) -> bool:
     return email.strip().lower().endswith("@" + settings.allowed_domain)
 

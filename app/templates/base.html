@@ -6,9 +6,19 @@
   <title>{% block title %}Engagements{% endblock %} · Shearwater</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body hx-boost="true">
-{% if user %}
+{% if user and user.user_type == 'client_external' %}
+<header class="topbar portal-bar">
+  <a class="brand" href="/portal">Shearwater <span>Client portal</span></a>
+  <nav><a href="/portal" class="{{ 'active' if nav == 'portal' }}">Your projects</a></nav>
+  <div class="me">
+    <span>{{ user.label }}</span>
+    <form method="post" action="/logout"><button type="submit">Sign out</button></form>
+  </div>
+</header>
+{% elif user %}
 <header class="topbar">
   <a class="brand" href="/">Shearwater <span>Engagements</span></a>
   <nav>
@@ -17,7 +27,7 @@
     <a href="/board/{{ key }}" class="{{ 'active' if nav == 'board:' ~ key }}">{{ label }} board</a>
     {% endfor %}
     {% if user.bypasses_membership %}
-    <a href="/team" class="{{ 'active' if nav == 'team' }}">Team assignment</a>
+    <a href="/team" class="{{ 'active' if nav == 'team' }}">Team</a>
     <a href="/events" class="{{ 'active' if nav == 'events' }}">Event log</a>
     {% endif %}
   </nav>

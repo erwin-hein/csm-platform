@@ -45,9 +45,15 @@ def create_engagement(db: Session, actor: User, *, client_id: uuid.UUID, type_ke
     name = name.strip()
     if not name:
         raise ValidationError("Engagement name is required")
-    stage = stage or etype.stage_keys[0]
-    if stage not in etype.stage_keys:
-        raise ValidationError(f"'{stage}' is not a {etype.display_name} stage")
+    if etype.stages_derived:
+        # Stages follow the engagement's stage-kind deliverables (e.g. phases); nothing to set.
+        if stage:
+            raise ValidationError(f"{etype.display_name} stages follow its {etype.stage_kind}s and aren't set by hand")
+        stage = None
+    else:
+        stage = stage or etype.stage_keys[0]
+        if stage not in etype.stage_keys:
+            raise ValidationError(f"'{stage}' is not a {etype.display_name} stage")
     engagement = Engagement(client_id=client.id, type_key=etype.key, name=name, stage=stage,
                             status="active", started_at=datetime.now(timezone.utc))
     db.add(engagement)
@@ -60,6 +66,9 @@ def create_engagement(db: Session, actor: User, *, client_id: uuid.UUID, type_ke
 @mutation("stage_changed")
 def change_stage(db: Session, actor: User, engagement_id: uuid.UUID, *, stage: str) -> Engagement:
     engagement = get_editable_engagement(db, actor, engagement_id)
+    if engagement.type.stages_derived:
+        raise ValidationError(f"{engagement.type.display_name} stages follow its {engagement.type.stage_kind}s; "
+                              f"update the {engagement.type.stage_kind} instead")
     # Validated app-side against the type's stage_vocab (CLAUDE.md §3 engagements.stage).
     if stage not in engagement.type.stage_keys:
         raise ValidationError(f"'{stage}' is not a {engagement.type.display_name} stage")
