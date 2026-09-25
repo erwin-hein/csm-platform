@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.errors import Forbidden
+from app.errors import NotFound
 from app.services import capacity, deliverables, engagements
 from tests.conftest import login
 
@@ -29,10 +29,10 @@ def test_capacity_counts_open_work_per_person(db, world):
     assert p.pipeline_status == "not_started"
 
 
-def test_capacity_is_ops_admin_only(http, db, world):
-    with pytest.raises(Forbidden):
+def test_capacity_needs_the_team_module(http, db, world):
+    with pytest.raises(NotFound):
         capacity.list_capacity(db, world.alice)
-    assert login(http, world.alice.email).get("/team").status_code == 403
+    assert login(http, world.alice.email).get("/team").status_code == 404
 
 
 def test_allocate_from_person_card(http, db, world):

@@ -1,0 +1,27 @@
+<div id="access-roles" class="card flush">
+  <table class="access-matrix">
+    <tr><th>Role</th>{% for m in modules %}<th>{{ m.label }}</th>{% endfor %}<th title="Given to every new person on first sign-in">Default</th><th class="num">People</th></tr>
+    {% for r in roles %}{% set levels = r.levels %}
+    <tr>
+      <td><b>{{ r.name }}</b><div class="small muted">{{ r.description or '' }}</div></td>
+      {% for m in modules %}
+      <td>
+        <form class="inline" hx-post="/admin/access/roles/{{ r.id }}/grants" hx-target="#access-roles" hx-swap="outerHTML">
+          <input type="hidden" name="module_key" value="{{ m.key }}">
+          <select name="level" class="lvl lvl-{{ levels.get(m.key, 'none') }}" onchange="this.form.requestSubmit()" aria-label="{{ r.name }} · {{ m.label }}">
+            <option value="" {{ 'selected' if m.key not in levels }}>—</option>
+            {% for l in ['use', 'manage'] %}<option value="{{ l }}" {{ 'selected' if levels.get(m.key) == l }}>{{ l }}</option>{% endfor %}
+          </select>
+        </form>
+      </td>
+      {% endfor %}
+      <td>
+        <form class="inline" hx-post="/admin/access/roles/{{ r.id }}" hx-target="#access-roles" hx-swap="outerHTML">
+          <input type="checkbox" name="is_default" value="true" {{ 'checked' if r.is_default }} onchange="this.form.requestSubmit()" aria-label="{{ r.name }} is a default role">
+        </form>
+      </td>
+      <td class="num">{{ role_counts[r.id] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>

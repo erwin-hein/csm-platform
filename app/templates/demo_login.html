@@ -12,7 +12,7 @@
     <label class="field"><span>Sign in as</span>
       <select name="email" id="demo-email">
         <optgroup label="Shearwater (internal)">
-        {% for u in users %}<option value="{{ u.email }}">{{ u.label }} — {{ u.role }} ({{ u.email }})</option>{% endfor %}
+        {% for u in users %}<option value="{{ u.email }}">{{ u.label }} — {{ u.access_label }} ({{ u.email }})</option>{% endfor %}
         </optgroup>
         {% if client_users %}<optgroup label="Client users (portal)">
         {% for u in client_users %}<option value="{{ u.email }}">{{ u.label }} — client ({{ u.email }})</option>{% endfor %}
@@ -25,7 +25,7 @@
     <form method="post" action="/demo-login" hx-boost="false" style="margin-top:10px">
       <label class="field"><span>Demo passcode</span><input type="password" name="passcode" required></label>
       <label class="field"><span>Email</span><input type="email" name="email" placeholder="name@shearwaterdata.com" required></label>
-      <p class="help">A new email is created on first sign-in as analyst — or admin, if listed in ADMIN_EMAILS.</p>
+      <p class="help">A new email is created on first sign-in with the default access roles (Delivery), or as admin if listed in ADMIN_EMAILS.</p>
       <button class="btn" type="submit">Sign in</button>
     </form>
   </details>

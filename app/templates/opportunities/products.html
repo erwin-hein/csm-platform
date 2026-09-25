@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Products{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/pipeline">Pipeline</a> ›</div>
+<div class="spread" style="margin-bottom:14px">
+  <div><h1>Products</h1>
+    <div class="muted small">What opportunities are made of. Changing a product never reprices an existing deal; each line item keeps its own price.{% if not can_manage %} Only sales leads edit this list.{% endif %}</div></div>
+</div>
+<div class="card flush">
+  <table>
+    <tr><th>Product</th><th>Pricing</th><th class="num">Default price</th><th>Delivered as</th><th>Status</th>{% if can_manage %}<th></th>{% endif %}</tr>
+    {% for p in products %}
+    <tr class="{{ 'na' if not p.active }}">
+      {% if can_manage %}
+      <td colspan="6">
+        <form class="row" method="post" action="/products/{{ p.id }}/edit">
+          <input type="text" name="name" value="{{ p.name }}" required style="width:220px">
+          <select name="pricing_model">{% for k, v in pricing_models.items() %}<option value="{{ k }}" {{ 'selected' if k == p.pricing_model }}>{{ v[0] }}</option>{% endfor %}</select>
+          <input type="number" name="default_unit_price" value="{{ p.default_unit_price if p.default_unit_price is not none else '' }}" min="0" step="any" placeholder="no default" style="width:120px">
+          <select name="engagement_type_key"><option value="">not an engagement</option>{% for t in types %}<option value="{{ t.key }}" {{ 'selected' if t.key == p.engagement_type_key }}>{{ t.display_name }}</option>{% endfor %}</select>
+          <label class="small"><input type="checkbox" name="active" value="true" {{ 'checked' if p.active }}> offered</label>
+          <button class="btn small" type="submit">Save</button>
+        </form>
+      </td>
+      {% else %}
+      <td><b>{{ p.name }}</b></td><td>{{ p.pricing_label }}</td>
+      <td class="num">{% if p.default_unit_price is not none %}{{ p.default_unit_price | usd }}/{{ p.unit }}{% else %}—{% endif %}</td>
+      <td>{{ p.engagement_type.display_name if p.engagement_type else '—' }}</td>
+      <td class="small">{{ 'offered' if p.active else 'retired' }}</td>
+      {% endif %}
+    </tr>
+    {% else %}<tr><td colspan="6" class="empty">No products yet.</td></tr>{% endfor %}
+  </table>
+</div>
+{% if can_manage %}
+<form class="card row" method="post" action="/products" style="margin-top:16px">
+  <b>+ Add product</b>
+  <input type="text" name="name" required placeholder="name" style="width:220px">
+  <select name="pricing_model">{% for k, v in pricing_models.items() %}<option value="{{ k }}">{{ v[0] }}</option>{% endfor %}</select>
+  <input type="number" name="default_unit_price" min="0" step="any" placeholder="default price" style="width:120px">
+  <select name="engagement_type_key"><option value="">not an engagement</option>{% for t in types %}<option value="{{ t.key }}">{{ t.display_name }}</option>{% endfor %}</select>
+  <button class="btn small primary" type="submit">Add</button>
+</form>
+<p class="small muted">Pricing: fixed bid is priced per project, T&amp;M per hour, a retainer per month. "Delivered as" suggests the engagement type when a won deal becomes an engagement.</p>
+{% endif %}
+{% endblock %}

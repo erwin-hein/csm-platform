@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.access import get_visible_client, require_ops_or_admin, visible_clients_stmt
+from app.access import get_visible_client, require_can_manage_clients, visible_clients_stmt
 from app.errors import ValidationError
 from app.events import emit, mutation
 from app.models import Client, ClientAlias, ClientContact, User
@@ -43,7 +43,7 @@ def _parse_domains(domains: str | list[str]) -> list[str]:
 
 @mutation("client_created")
 def create_client(db: Session, actor: User, *, name: str, domains: str | list[str] = "") -> Client:
-    require_ops_or_admin(actor)
+    require_can_manage_clients(actor)
     name = name.strip()
     if not name:
         raise ValidationError("Client name is required")
@@ -57,7 +57,7 @@ def create_client(db: Session, actor: User, *, name: str, domains: str | list[st
 
 @mutation("client_alias_added")
 def add_alias(db: Session, actor: User, client_id: uuid.UUID, *, alias: str, alias_type: str) -> ClientAlias:
-    require_ops_or_admin(actor)
+    require_can_manage_clients(actor)
     client = get_visible_client(db, actor, client_id)
     alias = alias.strip()
     if not alias:
@@ -75,7 +75,7 @@ def add_alias(db: Session, actor: User, client_id: uuid.UUID, *, alias: str, ali
 @mutation("client_contact_added")
 def add_contact(db: Session, actor: User, client_id: uuid.UUID, *, name: str, email: str = "",
                 title: str = "") -> ClientContact:
-    require_ops_or_admin(actor)
+    require_can_manage_clients(actor)
     client = get_visible_client(db, actor, client_id)
     if not name.strip():
         raise ValidationError("Contact name is required")

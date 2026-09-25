@@ -2,11 +2,11 @@
 {% set e = team.engagement %}
 <div id="team-{{ e.id }}" class="{{ '' if compact else 'card' }}">
   {% if not compact %}<div class="spread"><h2 style="margin:0">Team</h2>{% if team.can_manage %}<a class="small" href="/team">Team capacity →</a>{% endif %}</div>
-  <p class="small muted" style="margin:4px 0 8px">Membership is what grants analysts visibility into this engagement.</p>{% endif %}
+  <p class="small muted" style="margin:4px 0 8px">Membership is what grants visibility into this engagement.</p>{% endif %}
   <ul class="team-list">
     {% for m in team.members %}
     <li>
-      <div class="row" style="gap:8px">{{ initials(m.user) }}<div><b>{{ m.user.label }}</b><div class="small muted">{{ m.user.role }}</div></div></div>
+      <div class="row" style="gap:8px">{{ initials(m.user) }}<div><b>{{ m.user.label }}</b><div class="small muted">{{ m.user.access_label }}</div></div></div>
       <div class="row" style="gap:6px">
         {% if team.can_manage %}
         <form class="inline" hx-post="/engagements/{{ e.id }}/members" hx-target="#team-{{ e.id }}" hx-swap="outerHTML">
@@ -23,7 +23,7 @@
       </div>
     </li>
     {% else %}
-    <li><span class="warn-tag">No one assigned</span> <span class="small muted">— only ops/admin can see this engagement.</span></li>
+    <li><span class="warn-tag">No one assigned</span> <span class="small muted">— only people with engagements:manage can see this engagement.</span></li>
     {% endfor %}
   </ul>
   {% if team.can_manage and team.candidates %}
@@ -31,7 +31,7 @@
     <input type="hidden" name="compact" value="{{ 'true' if compact else 'false' }}">
     <select name="user_id" required>
       <option value="">+ Assign someone…</option>
-      {% for u in team.candidates %}<option value="{{ u.id }}">{{ u.label }} ({{ u.role }})</option>{% endfor %}
+      {% for u in team.candidates %}<option value="{{ u.id }}">{{ u.label }}{% if u.is_contractor %} (contractor){% endif %}</option>{% endfor %}
     </select>
     <select name="role">{% for r in team.roles %}<option {{ 'selected' if r == ('collaborator' if team.members else 'owner') }}>{{ r }}</option>{% endfor %}</select>
     <button class="btn small primary" type="submit">Assign</button>

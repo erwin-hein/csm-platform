@@ -5,18 +5,20 @@
 <h1>Add engagement</h1>
 <p class="muted">An engagement is a typed, time-bound unit of work for a client. Its type decides the stages and the deliverable structure.</p>
 <form class="card" method="post" action="/engagements" style="max-width: 760px">
+  {% if opp %}<input type="hidden" name="opportunity_id" value="{{ opp.id }}">
+  <div class="handoff-flag small">Delivers the won opportunity <b>{{ opp.name }}</b> ({{ opp.amount | usd }}): {% for li in opp.line_items %}{{ li.product.name }}{{ ', ' if not loop.last }}{% endfor %}.</div>{% endif %}
   <label class="field"><span>Client</span>
     <select name="client_id" required>
       <option value="">— pick a client —</option>
       {% for c in clients %}<option value="{{ c.id }}" {{ 'selected' if c.id|string == selected_client_id }}>{{ c.name }}</option>{% endfor %}
     </select></label>
-  <label class="field"><span>Name</span><input type="text" name="name" required placeholder="e.g. Omni Migration — 2026"></label>
+  <label class="field"><span>Name</span><input type="text" name="name" required placeholder="e.g. Omni Migration — 2026" value="{{ opp.name if opp else '' }}"></label>
   <label class="field" style="max-width:220px"><span>Start date</span><input type="date" name="started_on">
     <div class="help">Leave empty for today. Set it when entering an engagement that's already under way.</div></label>
   <div class="field"><span class="small muted" style="font-weight:600">Engagement type</span>
     <div class="type-choice" style="margin-top:6px">
       {% for t in types %}
-      <label class="{{ t.key }}"><input type="radio" name="type_key" value="{{ t.key }}" required {{ 'checked' if loop.first }}><b>{{ t.display_name }}</b>
+      <label class="{{ t.key }}"><input type="radio" name="type_key" value="{{ t.key }}" required {{ 'checked' if (t.key == selected_type if selected_type else loop.first) }}><b>{{ t.display_name }}</b>
         <div class="small muted" style="margin-top:6px">Stages</div>
         <ol>{% for s in t.stage_vocab %}<li>{{ s.label }}</li>{% endfor %}</ol>
         <div class="small muted" style="margin-top:6px">Deliverables</div>

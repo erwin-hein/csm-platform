@@ -66,7 +66,8 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
         raise WrongAudience("/portal")
     request.state.user = user
     request.state.nav_types = [(t.key, t.display_name) for t in
-                               db.scalars(select(EngagementType).order_by(EngagementType.display_name.desc()))]
+                               db.scalars(select(EngagementType).order_by(EngagementType.display_name.desc()))
+                               ] if user.can("engagements") else []
     return user
 
 

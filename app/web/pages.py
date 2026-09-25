@@ -16,8 +16,12 @@ from app.access import (
     get_visible_client,
     get_visible_deliverable,
     get_visible_engagement,
+    get_visible_opportunity,
+    can_manage_clients,
+    can_manage_memberships,
     membership_role,
-    require_ops_or_admin,
+    require_can_manage_clients,
+    require_module,
 )
 from app.db import get_db
 from app.errors import NotFound, ValidationError
@@ -39,6 +43,7 @@ from app.services import clients as client_service
 from app.services import deliverables as deliverable_service
 from app.services import engagements as engagement_service
 from app.services import memberships as membership_service
+from app.services import opportunities as opportunity_service
 from app.services import users as user_service
 from app.web.auth import current_user
 from app.web.templating import is_htmx, render
@@ -81,10 +86,21 @@ def _engagement_summary(db: Session, engagement: Engagement) -> dict:
 CLOSED_STATUSES = ("complete", "cancelled")
 
 
+def _home_for(user: User) -> str | None:
+    """Where someone without the engagements module lands instead of the portfolio."""
+    for module, url in (("opportunities", "/pipeline"), ("team", "/team")):
+        if user.can(module):
+            return url
+    return None
+
+
 @router.get("/")
 def portfolio(request: Request, show_closed: bool = False, db: Session = Depends(get_db),
               user: User = Depends(current_user)):
     """Completed/cancelled engagements are hidden unless ?show_closed=true."""
+    if not user.can("engagements"):
+        home = _home_for(user)
+        return _back(home) if home else render(request, "no_access.html")
     engagements = engagement_service.list_visible_engagements(db, user)
     by_client: dict[uuid.UUID, list[dict]] = defaultdict(list)
     hidden: dict[uuid.UUID, int] = defaultdict(int)
@@ -93,10 +109,19 @@ def portfolio(request: Request, show_closed: bool = False, db: Session = Depends
             hidden[e.client_id] += 1
             continue
         by_client[e.client_id].append(_engagement_summary(db, e))
-    clients = client_service.list_visible_clients(db, user)
+    # The portfolio is engagement-centric: everyone sees the clients of their engagements;
+    # engagements:manage also sees clients with none yet (prospects live on /clients).
+    if user.bypasses_membership:
+        clients = [c for c in client_service.list_visible_clients(db, user)
+                   if c.engagements or not opportunity_service.list_visible_opportunities(db, user, client_id=c.id)]
+    else:
+        client_ids = {e.client_id for e in engagements}
+        clients = [c for c in client_service.list_visible_clients(db, user) if c.id in client_ids]
+    won_unlinked = (opportunity_service.list_won_without_engagement(db, user)
+                    if user.bypasses_membership and user.can("opportunities") else [])
     return render(request, "portfolio.html", nav="portfolio", clients=clients, by_client=by_client,
                   hidden=hidden, hidden_total=sum(hidden.values()), show_closed=show_closed,
-                  types=engagement_service.list_engagement_types(db))
+                  types=engagement_service.list_engagement_types(db), won_unlinked=won_unlinked)
 
 
 # ---------------------------------------------------------------- board (per engagement type)
@@ -111,6 +136,7 @@ def board_default():
 def board(type_key: str, request: Request, group: str = "", sort: str = "", show_closed: bool = False,
           db: Session = Depends(get_db), user: User = Depends(current_user)):
     """One big card per engagement, grouped and sorted as the viewer chooses."""
+    require_module(user, "engagements")
     try:
         etype = engagement_service.get_engagement_type(db, type_key)
     except ValidationError:
@@ -130,10 +156,27 @@ def board(type_key: str, request: Request, group: str = "", sort: str = "", show
 # ---------------------------------------------------------------- clients
 
 
+@router.get("/clients")
+def client_list(request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Every client the user can see, with its engagements and pipeline side by side.
+    Prospects (clients with opportunities but no engagements) live here."""
+    clients = client_service.list_visible_clients(db, user)
+    if not clients and not can_manage_clients(user):
+        raise NotFound("Page not found")
+    engagements = defaultdict(list)
+    for e in engagement_service.list_visible_engagements(db, user):
+        engagements[e.client_id].append(e)
+    opps = defaultdict(list)
+    for o in opportunity_service.list_visible_opportunities(db, user):
+        opps[o.client_id].append(o)
+    return render(request, "clients.html", nav="clients", clients=clients, engagements=engagements, opps=opps,
+                  can_create=can_manage_clients(user))
+
+
 @router.get("/clients/new")
 def client_new(request: Request, user: User = Depends(current_user)):
-    require_ops_or_admin(user)
-    return render(request, "client_new.html", nav="portfolio")
+    require_can_manage_clients(user)
+    return render(request, "client_new.html", nav="clients")
 
 
 @router.post("/clients")
@@ -149,9 +192,10 @@ def client_detail(client_id: uuid.UUID, request: Request, db: Session = Depends(
                   user: User = Depends(current_user)):
     client = get_visible_client(db, user, client_id)
     engagements = [e for e in engagement_service.list_visible_engagements(db, user) if e.client_id == client.id]
-    return render(request, "client_detail.html", nav="portfolio", client=client,
+    return render(request, "client_detail.html", nav="clients", client=client,
                   engagements=[_engagement_summary(db, e) for e in engagements],
-                  alias_types=client_service.ALIAS_TYPES)
+                  opportunities=opportunity_service.list_visible_opportunities(db, user, client_id=client.id),
+                  can_manage_clients=can_manage_clients(user), alias_types=client_service.ALIAS_TYPES)
 
 
 @router.post("/clients/{client_id}/aliases")
@@ -174,23 +218,28 @@ def client_add_contact(client_id: uuid.UUID, name: str = Form(""), email: str = 
 
 
 @router.get("/engagements/new")
-def engagement_new(request: Request, client_id: str = "", db: Session = Depends(get_db),
+def engagement_new(request: Request, client_id: str = "", opportunity_id: str = "", db: Session = Depends(get_db),
                    user: User = Depends(current_user)):
-    require_ops_or_admin(user)
+    require_module(user, "engagements", "manage")
     types = engagement_service.list_engagement_types(db)
+    opp = get_visible_opportunity(db, user, _uuid(opportunity_id)) if opportunity_id else None
     return render(request, "engagement_new.html", nav="portfolio",
-                  clients=client_service.list_visible_clients(db, user), selected_client_id=client_id,
+                  clients=client_service.list_visible_clients(db, user),
+                  selected_client_id=str(opp.client_id) if opp else client_id, opp=opp,
+                  selected_type=opportunity_service.get_suggested_engagement_type(opp) if opp else None,
                   types=types, kinds={t.key: deliverable_service.kinds_for_type(db, t.key) for t in types})
 
 
 @router.post("/engagements")
 def engagement_create(client_id: str = Form(""), type_key: str = Form(""), name: str = Form(""),
-                      started_on: str = Form(""), db: Session = Depends(get_db), user: User = Depends(current_user)):
+                      started_on: str = Form(""), opportunity_id: str = Form(""), db: Session = Depends(get_db),
+                      user: User = Depends(current_user)):
     cid = _uuid(client_id)
     if cid is None:
         raise ValidationError("Pick a client")
     engagement = engagement_service.create_engagement(db, user, client_id=cid, type_key=type_key, name=name,
-                                                      started_on=started_on or None)
+                                                      started_on=started_on or None,
+                                                      opportunity_id=_uuid(opportunity_id))
     db.commit()
     return _back(f"/engagements/{engagement.id}")
 
@@ -213,9 +262,10 @@ def _team_context(db: Session, user: User, engagement: Engagement) -> dict:
     return {
         "engagement": engagement,
         "members": members,
-        "candidates": [u for u in user_service.list_internal_users(db) if u.id not in member_ids],
+        "candidates": [u for u in user_service.list_internal_users(db)
+                       if u.id not in member_ids and u.can("engagements")],
         "roles": MEMBERSHIP_ROLES,
-        "can_manage": user.bypasses_membership,
+        "can_manage": can_manage_memberships(user),
     }
 
 
@@ -279,6 +329,7 @@ def _team_response(request: Request, db: Session, user: User, engagement_id: uui
 def _capacity_context(db: Session, user: User) -> dict:
     people = capacity_service.list_capacity(db, user)
     return {
+        "can_allocate": can_manage_memberships(user),
         "people": people,
         "max_hours": max([p.open_hours for p in people] + [1]),
         "open_engagements": capacity_service.list_open_engagements(db),
@@ -315,15 +366,16 @@ def team_allocate(person_id: uuid.UUID, request: Request, engagement_id: str = F
 
 @router.get("/team/engagements")
 def team_overview(request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    require_ops_or_admin(user)
-    engagements = engagement_service.list_visible_engagements(db, user)
+    require_module(user, "team")
+    engagements = capacity_service.list_all_engagements(db)
     rows = [{"engagement": e, "team": _team_context(db, user, e)} for e in engagements]
     rows.sort(key=lambda r: (bool(r["team"]["members"]), r["engagement"].status != "active",
                              r["engagement"].client.name, r["engagement"].name))
     load: dict[uuid.UUID, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for m in db.scalars(select(EngagementMembership)):
         load[m.user_id][m.role] += 1
-    return render(request, "team.html", nav="team", rows=rows, users=user_service.list_internal_users(db),
+    return render(request, "team.html", nav="team", rows=rows,
+                  users=[u for u in user_service.list_internal_users(db) if u.can("engagements")],
                   load=load, roles=MEMBERSHIP_ROLES)
 
 
@@ -604,14 +656,29 @@ def deliverable_remove_blocker(deliverable_id: uuid.UUID, blocker_id: uuid.UUID,
     return _back(f"/deliverables/{deliverable_id}")
 
 
-# ---------------------------------------------------------------- event log (ops/admin)
+# ---------------------------------------------------------------- event log
+
+
+# Which module's 'manage' level lets someone read an entity type's events. Anything not
+# listed (users, access roles) is admin-only.
+EVENT_MODULES = {"engagement": ("engagements",), "deliverable": ("engagements",),
+                 "client": ("engagements", "opportunities"), "opportunity": ("opportunities",),
+                 "product": ("opportunities",)}
+
+
+def can_read_event_log(user: User) -> bool:
+    return any(user.can(m, "manage") for m in ("engagements", "opportunities"))
 
 
 @router.get("/events")
 def event_log(request: Request, engagement: str = "", db: Session = Depends(get_db),
               user: User = Depends(current_user)):
-    require_ops_or_admin(user)
+    if not can_read_event_log(user):
+        raise NotFound("Page not found")
     stmt = select(Event).order_by(Event.id.desc()).limit(300)
+    if not user.is_admin:
+        allowed = [t for t, mods in EVENT_MODULES.items() if any(user.can(m, "manage") for m in mods)]
+        stmt = stmt.where(Event.entity_type.in_(allowed))
     scoped = None
     if engagement:
         scoped = get_visible_engagement(db, user, _uuid(engagement))

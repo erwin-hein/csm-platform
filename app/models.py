@@ -14,13 +14,16 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Column,
     Date,
     DateTime,
     Enum,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
     Numeric,
+    Table,
     Text,
     UniqueConstraint,
     func,
@@ -32,7 +35,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 PIPELINE_STATUSES = ["not_started", "in_progress", "internal_validation", "external_validation", "done"]
 ENGAGEMENT_STATUSES = ["active", "paused", "complete", "cancelled"]
 USER_TYPES = ["internal", "client_external"]
-INTERNAL_ROLES = ["analyst", "contractor", "ops", "admin"]
+ACCESS_LEVELS = ["use", "manage"]  # per-module access, lowest first (CLAUDE.md §3 Identity & access)
 MEMBERSHIP_ROLES = ["owner", "collaborator", "viewer"]
 VIEWER_SCOPES = ["full", "assigned_only"]
 REVIEW_VERDICTS = ["accepted", "blocked", "rejected"]
@@ -57,6 +60,54 @@ def _created_at() -> Mapped[datetime]:
 # ---------------------------------------------------------------- identity & access
 
 
+class Module(Base):
+    """A registered area of the app (engagements, opportunities, team, ...). Adding a module is
+    one row here plus grants on the roles that should have it."""
+
+    __tablename__ = "modules"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
+
+
+class AccessRoleGrant(Base):
+    __tablename__ = "access_role_grants"
+    __table_args__ = (CheckConstraint("level IN ('use', 'manage')", name="ck_access_role_grants_level"),)
+
+    role_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("access_roles.id", ondelete="CASCADE"),
+                                               primary_key=True)
+    module_key: Mapped[str] = mapped_column(Text, ForeignKey("modules.key"), primary_key=True)
+    level: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+user_access_roles = Table(
+    "user_access_roles", Base.metadata,
+    Column("user_id", UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True),
+    Column("role_id", UUID(as_uuid=True), ForeignKey("access_roles.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class AccessRole(Base):
+    """A named bundle of module grants. Users hold any number of roles; their effective level
+    per module is the highest any of them grants."""
+
+    __tablename__ = "access_roles"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    # Granted to every new internal user on first login.
+    is_default: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
+    created_at: Mapped[datetime] = _created_at()
+
+    grants: Mapped[list[AccessRoleGrant]] = relationship(lazy="selectin", cascade="all, delete-orphan")
+
+    @property
+    def levels(self) -> dict[str, str]:
+        return {g.module_key: g.level for g in self.grants}
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -64,18 +115,48 @@ class User(Base):
     email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     display_name: Mapped[str | None] = mapped_column(Text)
     user_type: Mapped[str] = mapped_column(Enum(*USER_TYPES, name="user_type"), nullable=False)
-    role: Mapped[str | None] = mapped_column(Enum(*INTERNAL_ROLES, name="internal_role"))
+    # Admin bypasses every module and record check, and is the only one who can edit access.
+    is_admin: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
+    # An employment fact, not an access level: contractors can't grant client access.
+    is_contractor: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
     status: Mapped[str] = mapped_column(Text, server_default="active", default="active")
     created_at: Mapped[datetime] = _created_at()
+
+    access_roles: Mapped[list[AccessRole]] = relationship(secondary=user_access_roles, lazy="selectin",
+                                                          order_by="AccessRole.name")
 
     @property
     def label(self) -> str:
         return self.display_name or self.email
 
+    def module_level(self, module: str) -> str | None:
+        """'manage', 'use' or None: the highest level any of the user's roles grants."""
+        if self.user_type != "internal" or self.status != "active":
+            return None
+        if self.is_admin:
+            return "manage"
+        best = None
+        for role in self.access_roles:
+            level = role.levels.get(module)
+            if level and (best is None or ACCESS_LEVELS.index(level) > ACCESS_LEVELS.index(best)):
+                best = level
+        return best
+
+    def can(self, module: str, level: str = "use") -> bool:
+        have = self.module_level(module)
+        return have is not None and ACCESS_LEVELS.index(have) >= ACCESS_LEVELS.index(level)
+
     @property
     def bypasses_membership(self) -> bool:
-        # CLAUDE.md §2 row 6: ops/admin bypass membership checks for portfolio-wide views.
-        return self.user_type == "internal" and self.role in ("ops", "admin")
+        """Sees every engagement regardless of team membership: engagements:manage (or admin)."""
+        return self.can("engagements", "manage")
+
+    @property
+    def access_label(self) -> str:
+        if self.is_admin:
+            return "admin"
+        names = [r.name for r in self.access_roles] or ["no access"]
+        return ", ".join(names) + (" · contractor" if self.is_contractor else "")
 
 
 class EngagementMembership(Base):
@@ -201,6 +282,8 @@ class Engagement(Base):
     expected_scope: Mapped[dict | None] = mapped_column(JSONB)
     health: Mapped[str | None] = mapped_column(Text)
     details: Mapped[dict] = mapped_column(JSONB, server_default="{}", default=dict)
+    # The won opportunity this engagement delivers, if any (bridged, never merged).
+    opportunity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("opportunities.id"))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _created_at()
@@ -208,6 +291,7 @@ class Engagement(Base):
     client: Mapped[Client] = relationship(back_populates="engagements")
     type: Mapped[EngagementType] = relationship(lazy="joined")
     memberships: Mapped[list[EngagementMembership]] = relationship(back_populates="engagement")
+    opportunity: Mapped["Opportunity | None"] = relationship(back_populates="engagements")
     deliverables: Mapped[list["Deliverable"]] = relationship(
         back_populates="engagement", order_by="Deliverable.created_at",
         primaryjoin="Engagement.id == foreign(Deliverable.engagement_id)",
@@ -364,6 +448,131 @@ class DeliverableClientReview(Base):
     created_at: Mapped[datetime] = _created_at()
 
     reviewer: Mapped[User] = relationship()
+
+
+# ---------------------------------------------------------------- opportunities (CRM)
+
+
+PRICING_MODELS = {  # key -> (label, unit)
+    "fixed_bid": ("Fixed bid", "project"),
+    "time_and_materials": ("Time & materials", "hour"),
+    "retainer": ("Retainer", "month"),
+}
+FORECAST_CATEGORIES = {"pipeline": "Pipeline", "best_case": "Best case", "commit": "Commit",
+                       "closed": "Closed", "omitted": "Omitted"}
+OVERRIDABLE_FORECAST_CATEGORIES = ["pipeline", "best_case", "commit", "omitted"]
+
+
+class OpportunityStage(Base):
+    __tablename__ = "opportunity_stages"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    default_probability: Mapped[int] = mapped_column(Integer, nullable=False)
+    forecast_category: Mapped[str] = mapped_column(Text, nullable=False)
+    is_closed: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_won: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Product(Base):
+    __tablename__ = "products"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    pricing_model: Mapped[str] = mapped_column(Text, nullable=False)
+    default_unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    engagement_type_key: Mapped[str | None] = mapped_column(Text, ForeignKey("engagement_types.key"))
+    active: Mapped[bool] = mapped_column(Boolean, server_default="true", default=True)
+    created_at: Mapped[datetime] = _created_at()
+
+    engagement_type: Mapped[EngagementType | None] = relationship()
+
+    @property
+    def pricing_label(self) -> str:
+        return PRICING_MODELS[self.pricing_model][0]
+
+    @property
+    def unit(self) -> str:
+        return PRICING_MODELS[self.pricing_model][1]
+
+
+class OpportunityLineItem(Base):
+    __tablename__ = "opportunity_line_items"
+    __table_args__ = (CheckConstraint("quantity > 0"), CheckConstraint("unit_price >= 0"))
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("opportunities.id"))
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created_at()
+
+    product: Mapped[Product] = relationship(lazy="joined")
+
+    @property
+    def total(self) -> Decimal:
+        return self.quantity * self.unit_price
+
+
+class Opportunity(Base):
+    __tablename__ = "opportunities"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    stage_key: Mapped[str] = mapped_column(Text, ForeignKey("opportunity_stages.key"), nullable=False)
+    probability: Mapped[int | None] = mapped_column(Integer)          # override; NULL = the stage's default
+    forecast_category: Mapped[str | None] = mapped_column(Text)       # override; NULL = the stage's default
+    close_date: Mapped[date] = mapped_column(Date, nullable=False)
+    next_step: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str | None] = mapped_column(Text)
+    lost_reason: Mapped[str | None] = mapped_column(Text)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _created_at()
+
+    client: Mapped[Client] = relationship(lazy="joined")
+    owner: Mapped[User | None] = relationship(lazy="joined")
+    stage: Mapped[OpportunityStage] = relationship(lazy="joined")
+    line_items: Mapped[list[OpportunityLineItem]] = relationship(lazy="selectin",
+                                                                 order_by="OpportunityLineItem.created_at")
+    engagements: Mapped[list[Engagement]] = relationship(back_populates="opportunity", order_by="Engagement.created_at")
+
+    @property
+    def amount(self) -> Decimal:
+        """Always the sum of the line items; there is no stored amount to drift."""
+        return sum((li.total for li in self.line_items), Decimal(0))
+
+    @property
+    def is_closed(self) -> bool:
+        return self.stage.is_closed
+
+    @property
+    def is_won(self) -> bool:
+        return self.stage.is_won
+
+    @property
+    def effective_probability(self) -> int:
+        """Closed stages are fixed (won 100, lost 0); open ones take the override if set."""
+        if self.stage.is_closed or self.probability is None:
+            return self.stage.default_probability
+        return self.probability
+
+    @property
+    def effective_forecast_category(self) -> str:
+        if self.stage.is_closed or self.forecast_category is None:
+            return self.stage.forecast_category
+        return self.forecast_category
+
+    @property
+    def weighted_amount(self) -> Decimal:
+        return self.amount * self.effective_probability / 100
+
+    @property
+    def is_overdue(self) -> bool:
+        return not self.is_closed and self.close_date < date.today()
 
 
 # ---------------------------------------------------------------- events — the spine

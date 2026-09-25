@@ -14,12 +14,11 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.access import require_ops_or_admin
+from app.access import require_module
 from app.models import Deliverable, Engagement, EngagementMembership, User
 
 OPEN_ENGAGEMENT_STATUSES = ("active", "paused")
 DUE_SOON_DAYS = 14
-ROLE_ORDER = {"analyst": 0, "contractor": 1, "ops": 2, "admin": 3}
 
 
 @dataclass
@@ -45,10 +44,11 @@ class PersonLoad:
 
 
 def list_capacity(db: Session, actor: User, *, today: date | None = None) -> list[PersonLoad]:
-    require_ops_or_admin(actor)
+    require_module(actor, "team")
     today = today or date.today()
+    # Only people who can work engagements carry engagement load.
     people = {u.id: PersonLoad(u) for u in db.scalars(
-        select(User).where(User.user_type == "internal", User.status == "active"))}
+        select(User).where(User.user_type == "internal", User.status == "active")) if u.can("engagements")}
 
     allocations: dict[tuple[uuid.UUID, uuid.UUID], Allocation] = {}
     for m, e in db.execute(
@@ -84,7 +84,13 @@ def list_capacity(db: Session, actor: User, *, today: date | None = None) -> lis
     order = {"owner": 0, "collaborator": 1, "viewer": 2}
     for p in people.values():
         p.allocations.sort(key=lambda a: (order[a.role], a.engagement.client.name, a.engagement.name))
-    return sorted(people.values(), key=lambda p: (ROLE_ORDER.get(p.user.role, 9), p.user.label))
+    return sorted(people.values(), key=lambda p: (p.user.bypasses_membership, p.user.label))
+
+
+def list_all_engagements(db: Session) -> list[Engagement]:
+    """Every engagement, for the Team screens (team:use sees who is on what, even without
+    engagements:manage)."""
+    return list(db.scalars(select(Engagement).order_by(Engagement.created_at)))
 
 
 def list_open_engagements(db: Session) -> list[Engagement]:

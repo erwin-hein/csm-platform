@@ -241,7 +241,7 @@ def can_manage_client_access(db: Session, actor: User, engagement_id: uuid.UUID)
     Collaborators, viewers and contractors can't grant it (CLAUDE.md §3 Portal)."""
     if actor.bypasses_membership:
         return True
-    return actor.role != "contractor" and membership_role(db, actor, engagement_id) == "owner"
+    return not actor.is_contractor and membership_role(db, actor, engagement_id) == "owner"
 
 
 def _require_can_invite(db: Session, actor: User, engagement_id: uuid.UUID) -> Engagement:
@@ -265,7 +265,7 @@ def invite_client_contact(db: Session, actor: User, engagement_id: uuid.UUID, *,
     user = db.scalar(select(User).where(User.email == contact.email.lower()))
     created = user is None
     if user is None:
-        user = User(email=contact.email.lower(), display_name=contact.name, user_type="client_external", role=None)
+        user = User(email=contact.email.lower(), display_name=contact.name, user_type="client_external")
         db.add(user)
         db.flush()
     elif user.user_type != "client_external":

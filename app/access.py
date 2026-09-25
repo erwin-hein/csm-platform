@@ -1,14 +1,21 @@
-"""Visibility and permission rules — CLAUDE.md §2 row 6.
+"""Visibility and permission rules — CLAUDE.md §2 row 6, §3 Identity & access.
 
-Visibility lives on engagement_memberships, never at the Client level. ops/admin
-bypass membership entirely. A Client is visible to a non-bypass user only through
-at least one Engagement they're a member of.
+Two independent axes:
+- **Module access** (which areas a user can enter) comes from their access roles: each
+  grants 'use' or 'manage' per module, and the highest level wins (User.module_level).
+  Admin is 'manage' everywhere. No access to a module means its records 404.
+- **Record access** inside a module: engagements go through engagement_memberships
+  ('manage' bypasses them); opportunities are all readable with 'use', editable by their
+  owner or with 'manage'.
 
-Permission model (CLAUDE.md §3 Identity & access):
-- read an engagement + its deliverables: any membership role, or ops/admin
+Engagements (CLAUDE.md §3 Identity & access):
+- read an engagement + its deliverables: any membership role, or engagements:manage
 - comment (internal notes):              anyone who can read
-- edit deliverables / move stage:        owner or collaborator, or ops/admin
-- create clients & engagements, manage memberships: ops/admin only
+- edit deliverables / move stage:        owner or collaborator, or engagements:manage
+- create engagements:                    engagements:manage
+- manage memberships:                    engagements:manage or team:manage
+Clients are shared by both modules: engagements:manage or opportunities:use see and
+create them all; anyone else sees a client only through an engagement they're on.
 
 Everything above is for *internal* users only: a client_external user never passes an
 internal check, whatever memberships they hold. Their access goes exclusively through the
@@ -21,18 +28,42 @@ from sqlalchemy import false, select
 from sqlalchemy.orm import Session
 
 from app.errors import Forbidden, NotFound
-from app.models import Client, Deliverable, DeliverableKind, Engagement, EngagementMembership, User
+from app.models import Client, Deliverable, DeliverableKind, Engagement, EngagementMembership, Opportunity, User
 
 EDIT_ROLES = ("owner", "collaborator")
+# Must match the rows in the `modules` table (a test checks it).
+MODULES = ("engagements", "opportunities", "team")
 
 
 def is_internal(user: User) -> bool:
     return user.user_type == "internal"
 
 
+def require_module(user: User, module: str, level: str = "use") -> None:
+    """No access to the module at all → 404 (its pages don't exist for you); 'use' where
+    'manage' is needed → 403."""
+    if not user.can(module):
+        raise NotFound("Page not found")
+    if not user.can(module, level):
+        raise Forbidden(f"You need {level} access to {module} for this")
+
+
+def require_admin(user: User) -> None:
+    if not (is_internal(user) and user.is_admin):
+        raise Forbidden("Only an admin can do this")
+
+
+def can_manage_clients(user: User) -> bool:
+    return user.can("engagements", "manage") or user.can("opportunities")
+
+
+def can_manage_memberships(user: User) -> bool:
+    return user.can("engagements", "manage") or user.can("team", "manage")
+
+
 def visible_engagements_stmt(user: User):
     stmt = select(Engagement)
-    if not is_internal(user):
+    if not user.can("engagements"):
         return stmt.where(false())
     if not user.bypasses_membership:
         stmt = stmt.join(
@@ -44,7 +75,9 @@ def visible_engagements_stmt(user: User):
 
 def visible_clients_stmt(user: User):
     stmt = select(Client)
-    if not is_internal(user):
+    if can_manage_clients(user):
+        return stmt
+    if not user.can("engagements"):
         return stmt.where(false())
     if not user.bypasses_membership:
         member_client_ids = (
@@ -65,13 +98,13 @@ def membership_role(db: Session, user: User, engagement_id: uuid.UUID) -> str | 
 
 
 def can_see_engagement(db: Session, user: User, engagement_id: uuid.UUID) -> bool:
-    if not is_internal(user):
+    if not user.can("engagements"):
         return False
     return user.bypasses_membership or membership_role(db, user, engagement_id) is not None
 
 
 def can_edit_engagement(db: Session, user: User, engagement_id: uuid.UUID) -> bool:
-    if not is_internal(user):
+    if not user.can("engagements"):
         return False
     return user.bypasses_membership or membership_role(db, user, engagement_id) in EDIT_ROLES
 
@@ -111,9 +144,43 @@ def get_editable_deliverable(db: Session, user: User, deliverable_id: uuid.UUID)
     return deliverable
 
 
-def require_ops_or_admin(user: User) -> None:
-    if not user.bypasses_membership:
-        raise Forbidden("Only ops or admin can do this")
+def require_can_manage_clients(user: User) -> None:
+    if not can_manage_clients(user):
+        raise Forbidden("You need engagements:manage or opportunities access to manage clients")
+
+
+def require_can_manage_memberships(user: User) -> None:
+    if not can_manage_memberships(user):
+        raise Forbidden("You need engagements:manage or team:manage to change teams")
+
+
+# ---------------------------------------------------------------- opportunities
+#
+# opportunities:use   → read every opportunity; create and edit your own
+# opportunities:manage → edit and reassign any opportunity; maintain the product catalog
+
+
+def visible_opportunities_stmt(user: User):
+    stmt = select(Opportunity)
+    return stmt if user.can("opportunities") else stmt.where(false())
+
+
+def can_edit_opportunity(user: User, opp: Opportunity) -> bool:
+    return user.can("opportunities", "manage") or (user.can("opportunities") and opp.owner_user_id == user.id)
+
+
+def get_visible_opportunity(db: Session, user: User, opportunity_id: uuid.UUID) -> Opportunity:
+    opp = db.get(Opportunity, opportunity_id)
+    if opp is None or not user.can("opportunities"):
+        raise NotFound("Opportunity not found")
+    return opp
+
+
+def get_editable_opportunity(db: Session, user: User, opportunity_id: uuid.UUID) -> Opportunity:
+    opp = get_visible_opportunity(db, user, opportunity_id)
+    if not can_edit_opportunity(user, opp):
+        raise Forbidden("Only the opportunity's owner or a sales lead can change it")
+    return opp
 
 
 # ---------------------------------------------------------------- client_external users (portal)

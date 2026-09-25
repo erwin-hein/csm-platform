@@ -71,12 +71,13 @@ def login(make_client, email: str) -> TestClient:
 def world(db):
     """Two analysts, an admin, and two engagements on the same client — one each."""
     admin = users.create_internal_user(db, None, email="admin@shearwaterdata.com", display_name="Ada Admin",
-                                       role="admin")
+                                       is_admin=True, roles=[])
     alice = users.create_internal_user(db, None, email="alice@shearwaterdata.com", display_name="Alice Analyst",
-                                       role="analyst")
+                                       roles=["Delivery"])
     bob = users.create_internal_user(db, None, email="bob@shearwaterdata.com", display_name="Bob Analyst",
-                                     role="analyst")
-    ops = users.create_internal_user(db, None, email="olu@shearwaterdata.com", display_name="Olu Ops", role="ops")
+                                     roles=["Delivery"])
+    ops = users.create_internal_user(db, None, email="olu@shearwaterdata.com", display_name="Olu Ops",
+                                     roles=["Operations"])
     client = clients.create_client(db, admin, name="Acme Corp", domains="acme.com")
     other_client = clients.create_client(db, admin, name="Globex", domains="globex.com")
     alice_eng = engagements.create_engagement(db, admin, client_id=client.id, type_key="migration",
@@ -114,3 +115,21 @@ def portal(db, world):
     db.flush()
     return type("Portal", (), dict(lead=lead, qa=qa, phase=phase, dash=dash, qa_tile=qa_tile,
                                    other_tile=other_tile, other_dash=other_dash, eng=world.alice_eng))
+
+
+@pytest.fixture
+def crm(db, world):
+    """A sales rep, a sales lead, a delivery+sales hybrid, and a product."""
+    from app.services import opportunities
+
+    rep = users.create_internal_user(db, None, email="sam@shearwaterdata.com", display_name="Sam Sales", roles=["Sales"])
+    lead = users.create_internal_user(db, None, email="lee@shearwaterdata.com", display_name="Lee Lead",
+                                      roles=["Sales lead"])
+    hybrid = users.create_internal_user(db, None, email="hana@shearwaterdata.com", display_name="Hana Hybrid",
+                                        roles=["Delivery", "Sales"])
+    qs = opportunities.create_product(db, world.admin, name="QuickStart", pricing_model="fixed_bid",
+                                      default_unit_price="35000", engagement_type_key="quickstart")
+    hours = opportunities.create_product(db, world.admin, name="Advisory hours", pricing_model="time_and_materials",
+                                         default_unit_price="200")
+    db.flush()
+    return type("Crm", (), dict(rep=rep, lead=lead, hybrid=hybrid, qs=qs, hours=hours))

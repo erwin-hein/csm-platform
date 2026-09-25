@@ -2,12 +2,17 @@
 {% from "macros.html" import type_badge, progress_bar, progress_text, stepper, member_chips, eng_status %}
 {% block title %}{{ client.name }}{% endblock %}
 {% block content %}
-<div class="crumbs"><a href="/">Portfolio</a> ›</div>
+<div class="crumbs"><a href="/clients">Clients</a> ›</div>
 <div class="spread" style="margin-bottom:16px">
   <div><h1>{{ client.name }}</h1><div class="muted small">/{{ client.slug }}{% for d in client.domains %} · {{ d }}{% endfor %}</div></div>
+  <div class="row">
+  {% if user.can('opportunities') %}<a class="btn" href="/opportunities/new?client_id={{ client.id }}">+ Add Opportunity</a>{% endif %}
   {% if user.bypasses_membership %}<a class="btn primary" href="/engagements/new?client_id={{ client.id }}">+ Add Engagement</a>{% endif %}
+  </div>
 </div>
 <div class="grid two">
+  <div class="stack">
+  {% if user.can('engagements') %}
   <div class="card flush">
     <div class="section-head"><h2 style="margin:0">Engagements</h2><span class="small muted">{% if not user.bypasses_membership %}only the ones you're assigned to{% endif %}</span></div>
     <table>
@@ -23,6 +28,25 @@
       {% else %}<tr><td colspan="5" class="empty">No engagements yet.</td></tr>{% endfor %}
     </table>
   </div>
+  {% endif %}
+  {% if user.can('opportunities') %}
+  <div class="card flush">
+    <div class="section-head"><h2 style="margin:0">Opportunities</h2><span class="small muted">{{ opportunities | rejectattr('is_closed') | list | length }} open</span></div>
+    <table>
+      <tr><th>Opportunity</th><th>Stage</th><th class="num">Amount</th><th>Close</th><th>Owner</th></tr>
+      {% for o in opportunities %}
+      <tr>
+        <td><a href="/opportunities/{{ o.id }}"><b>{{ o.name }}</b></a>{% if o.is_won and not o.engagements %} <span class="warn-tag">No engagement</span>{% endif %}</td>
+        <td><span class="opp-stage st-{{ o.stage_key }}">{{ o.stage.label }}</span></td>
+        <td class="num">{{ o.amount | usd }}</td>
+        <td class="small {{ 'overdue' if o.is_overdue }}">{{ o.close_date.strftime('%b %d, %Y') }}</td>
+        <td class="small">{{ o.owner.label if o.owner else '—' }}</td>
+      </tr>
+      {% else %}<tr><td colspan="5" class="empty">No opportunities yet.</td></tr>{% endfor %}
+    </table>
+  </div>
+  {% endif %}
+  </div>
   <div class="stack">
     <div class="card">
       <h2>Contacts</h2>
@@ -30,7 +54,7 @@
         {% for c in client.contacts %}<li><div><b>{{ c.name }}</b>{% if c.title %} <span class="muted">· {{ c.title }}</span>{% endif %}<div class="small muted">{{ c.email or '' }}</div></div></li>
         {% else %}<li class="muted">No contacts yet.</li>{% endfor %}
       </ul>
-      {% if user.bypasses_membership %}
+      {% if can_manage_clients %}
       <details style="margin-top:10px"><summary class="small">+ Add contact</summary>
         <form method="post" action="/clients/{{ client.id }}/contacts" style="margin-top:8px">
           <label class="field"><span>Name</span><input type="text" name="name" required></label>
@@ -43,7 +67,7 @@
     <div class="card">
       <h2>Aliases</h2>
       <div class="row">{% for a in client.aliases %}<span class="role-chip"><b>{{ a.alias }}</b> {{ a.alias_type }}</span>{% else %}<span class="muted">None.</span>{% endfor %}</div>
-      {% if user.bypasses_membership %}
+      {% if can_manage_clients %}
       <details style="margin-top:10px"><summary class="small">+ Add alias</summary>
         <form method="post" action="/clients/{{ client.id }}/aliases" class="row" style="margin-top:8px">
           <input type="text" name="alias" required placeholder="alias">

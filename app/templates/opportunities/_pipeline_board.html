@@ -1,0 +1,34 @@
+{% from "macros.html" import initials %}
+<div id="pipeline-board" class="pipeline-board">
+  {% for col in columns %}{% set s = col.stage %}
+  <section class="pcol st-{{ s.key }}">
+    <header class="pcol-head">
+      <div class="spread"><b>{{ s.label }}</b><span class="muted small">{{ col.cards | length }}</span></div>
+      <div class="pcol-total">{{ col.total | usd }}</div>
+      <div class="small muted">{% if s.is_closed %}{{ 'won' if s.is_won else 'lost' }}{% else %}weighted {{ col.weighted | usd }} · {{ s.default_probability }}%{% endif %}</div>
+    </header>
+    {% for o in col.cards %}
+    <article class="ocard {{ 'overdue' if o.is_overdue }}">
+      <div class="spread ocard-top"><span class="bcard-client">{{ o.client.name }}</span>{% if o.owner %}<span class="avatars">{{ initials(o.owner) }}</span>{% endif %}</div>
+      <a class="ocard-name" href="/opportunities/{{ o.id }}">{{ o.name }}</a>
+      <div class="spread"><span class="ocard-amount">{{ o.amount | usd }}</span>
+        <span class="small muted">{% if not o.is_closed %}{{ o.effective_probability }}% · {{ FORECAST_CATEGORIES[o.effective_forecast_category] }}{% endif %}</span></div>
+      <div class="small muted ocard-products">{% for li in o.line_items %}{{ li.product.name }}{{ ' · ' if not loop.last }}{% endfor %}</div>
+      <div class="spread ocard-foot">
+        <span class="small {{ 'overdue' if o.is_overdue }}">{{ 'Closed' if o.is_closed else 'Close' }} {{ o.close_date.strftime('%b %d') }}{% if o.is_overdue %} · past due{% endif %}</span>
+        {% if o.is_won and not o.engagements %}<span class="warn-tag">No engagement</span>{% endif %}
+        {% if can_edit[o.id] %}
+        <form class="inline" hx-post="/opportunities/{{ o.id }}/stage" hx-target="#pipeline-board" hx-swap="outerHTML">
+          <input type="hidden" name="panel" value="pipeline"><input type="hidden" name="owner" value="{{ owner }}">
+          <input type="hidden" name="show_closed" value="{{ 'true' if show_closed else 'false' }}"><input type="hidden" name="lost_reason" value="">
+          <select name="stage_key" class="stage-move" aria-label="Move stage" onchange="oppStage(this)">
+            {% for st in stages %}<option value="{{ st.key }}" {{ 'selected' if st.key == o.stage_key }}>{{ st.label }}</option>{% endfor %}
+          </select>
+        </form>
+        {% endif %}
+      </div>
+    </article>
+    {% else %}<div class="empty small">Nothing here.</div>{% endfor %}
+  </section>
+  {% endfor %}
+</div>

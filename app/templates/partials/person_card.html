@@ -3,8 +3,8 @@
 <div class="card person" id="person-{{ u.id }}">
   <div class="spread person-head">
     <div class="row" style="gap:10px">{{ initials(u) }}
-      <div><b>{{ u.label }}</b> <span class="role-chip">{{ u.role }}</span><div class="small muted">{{ u.email }}</div></div></div>
-    {% if u.bypasses_membership %}<span class="small muted">Sees every engagement via role</span>{% endif %}
+      <div><b>{{ u.label }}</b> <span class="role-chip">{{ u.access_label }}</span><div class="small muted">{{ u.email }}</div></div></div>
+    {% if u.bypasses_membership %}<span class="small muted">Sees every engagement (engagements:manage)</span>{% endif %}
   </div>
 
   <div class="person-stats">
@@ -26,6 +26,7 @@
       <div class="alloc-name">{{ type_badge(e.type) }}
         <div><a href="/engagements/{{ e.id }}"><b>{{ e.name }}</b></a> {{ eng_status(e.status) }}
           <div class="small muted">{{ e.client.name }} · {{ e.stage_label }} · {{ a.open_items }} open{% if a.open_hours %} · {{ a.open_hours | float | round(1) }}h{% endif %}</div></div></div>
+      {% if can_allocate %}
       <div class="row" style="gap:6px">
         <form class="inline" hx-post="/engagements/{{ e.id }}/members" hx-target="#person-{{ u.id }}" hx-swap="outerHTML">
           <input type="hidden" name="user_id" value="{{ u.id }}"><input type="hidden" name="panel" value="person">
@@ -37,13 +38,14 @@
           <button class="btn small danger" type="submit" title="Remove">✕</button>
         </form>
       </div>
+      {% else %}<span class="role-chip {{ a.role }}">{{ a.role }}</span>{% endif %}
     </li>
     {% else %}<li class="muted small">Not on any open engagement.</li>{% endfor %}
   </ul>
 
   {% set mine = p.allocations | map(attribute='engagement') | map(attribute='id') | list %}
   {% set available = open_engagements | rejectattr('id', 'in', mine) | list %}
-  {% if available %}
+  {% if available and can_allocate %}
   <form class="row alloc-form" hx-post="/team/people/{{ u.id }}/allocate" hx-target="#person-{{ u.id }}" hx-swap="outerHTML">
     <select name="engagement_id" required>
       <option value="">+ Allocate to an engagement…</option>

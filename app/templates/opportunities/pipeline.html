@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Pipeline{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<div class="spread" style="margin-bottom: 14px">
+  <div>
+    <h1>Pipeline</h1>
+    <div class="muted small">Open pipeline {{ open_total | usd }} · weighted {{ open_weighted | usd }}{% if not show_closed %} · closed deals hidden{% endif %}.</div>
+  </div>
+  <div class="row">
+    <form class="board-controls" method="get">
+      <label>Owner
+        <select name="owner" onchange="this.form.requestSubmit()">
+          <option value="all" {{ 'selected' if owner == 'all' }}>Everyone</option>
+          <option value="mine" {{ 'selected' if owner == 'mine' }}>Mine</option>
+          {% for u in sales_users %}<option value="{{ u.id }}" {{ 'selected' if owner == u.id|string }}>{{ u.label }}</option>{% endfor %}
+        </select></label>
+      <label class="check"><input type="checkbox" name="show_closed" value="true" {{ 'checked' if show_closed }} onchange="this.form.requestSubmit()"> Show closed</label>
+    </form>
+    <a class="btn" href="/products">Products</a>
+    <a class="btn primary" href="/opportunities/new">+ Add Opportunity</a>
+  </div>
+</div>
+{% include "opportunities/_won_unlinked.html" %}
+{% include "opportunities/_pipeline_board.html" %}
+{% endblock %}

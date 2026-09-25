@@ -20,6 +20,7 @@ from app.services import clients as C
 from app.services import deliverables as D
 from app.services import engagements as E
 from app.services import memberships as M
+from app.services import opportunities as O
 from app.services import users as U
 
 TODAY = date.today()
@@ -30,12 +31,24 @@ def _d(days: int) -> date:
 
 
 USERS = [
-    # email, display name, role
-    ("morgan.ellis@shearwaterdata.com", "Morgan Ellis", "admin"),
-    ("priya.raman@shearwaterdata.com", "Priya Raman", "analyst"),
-    ("tomas.alvarez@shearwaterdata.com", "Tomás Alvarez", "analyst"),
-    ("aisha.bello@shearwaterdata.com", "Aisha Bello", "analyst"),
-    ("jordan.kim@shearwaterdata.com", "Jordan Kim", "contractor"),
+    # email, display name, access roles, admin, contractor — every module combination worth demoing
+    ("morgan.ellis@shearwaterdata.com", "Morgan Ellis", [], True, False),
+    ("elena.park@shearwaterdata.com", "Elena Park", ["Operations"], False, False),
+    ("priya.raman@shearwaterdata.com", "Priya Raman", ["Delivery", "Sales"], False, False),
+    ("tomas.alvarez@shearwaterdata.com", "Tomás Alvarez", ["Delivery", "Resourcing"], False, False),
+    ("aisha.bello@shearwaterdata.com", "Aisha Bello", ["Delivery"], False, False),
+    ("jordan.kim@shearwaterdata.com", "Jordan Kim", ["Delivery"], False, True),
+    ("rafael.costa@shearwaterdata.com", "Rafael Costa", ["Sales"], False, False),
+    ("nadia.osei@shearwaterdata.com", "Nadia Osei", ["Sales lead"], False, False),
+]
+
+PRODUCTS = [
+    # name, pricing model, default unit price, delivered as
+    ("QuickStart", "fixed_bid", "35000", "quickstart"),
+    ("Omni Migration", "fixed_bid", "90000", "migration"),
+    ("Dashboard build", "fixed_bid", "40000", None),
+    ("Advisory hours", "time_and_materials", "225", None),
+    ("Support retainer", "retainer", "6000", None),
 ]
 
 QS_MODULES = [
@@ -98,10 +111,11 @@ def seed_migration(db: Session, admin: User, eng_id, spec: dict, *, assignee=Non
 
 def seed(db: Session) -> None:
     users = {}
-    for email, name, role in USERS:
+    for email, name, roles, is_admin, contractor in USERS:
         users[name.split()[0].lower()] = U.get_user_by_email(db, email) or U.create_internal_user(
-            db, None, email=email, display_name=name, role=role)
+            db, None, email=email, display_name=name, roles=roles, is_admin=is_admin, is_contractor=contractor)
     admin, priya, tomas, aisha, jordan = (users[k] for k in ("morgan", "priya", "tomás", "aisha", "jordan"))
+    rafael, nadia = users["rafael"], users["nadia"]
 
     # ---------------- clients
     northwind = C.create_client(db, admin, name="Northwind Logistics", domains="northwindlogistics.com")
@@ -273,14 +287,74 @@ def seed(db: Session) -> None:
         "dashboards": [("Claims Overview", "not_started", [("Open claims", "not_started"), ("Loss ratio", "not_started")])],
     })
 
+    seed_opportunities(db, admin, {"priya": priya, "rafael": rafael, "nadia": nadia},
+                       clients={"northwind": northwind, "bluefin": bluefin, "cobalt": cobalt, "harbor": harbor,
+                                "meridian": meridian},
+                       delivered={"bluefin": bf, "cobalt": cb_mig, "harbor": hp, "meridian": meridian_qs,
+                                  "northwind": nw_qs})
+
+
+def seed_opportunities(db: Session, admin: User, people: dict, *, clients: dict, delivered: dict) -> None:
+    """Products, a pipeline across every stage, won deals linked to the engagements that
+    deliver them, one won deal nothing delivers yet, and a couple of prospects."""
+    products = {name: O.create_product(db, admin, name=name, pricing_model=model, default_unit_price=price,
+                                       engagement_type_key=etype) for name, model, price, etype in PRODUCTS}
+    atlas = C.create_client(db, admin, name="Atlas Freight", domains="atlasfreight.com")
+    juniper = C.create_client(db, admin, name="Juniper Biotech", domains="juniperbio.com")
+    C.add_contact(db, admin, atlas.id, name="Greta Holm", email="greta.holm@atlasfreight.com", title="COO")
+    C.add_contact(db, admin, juniper.id, name="Sam Whitlock", email="swhitlock@juniperbio.com", title="Head of Data")
+
+    def opp(client, name, stage, close_in, owner, items, **kw):
+        (first, qty, price), rest = items[0], items[1:]
+        o = O.create_opportunity(db, owner, client_id=client.id, name=name, stage_key=stage, close_date=_d(close_in),
+                                 product_id=products[first].id, quantity=qty, unit_price=price, **kw)
+        for pname, q, p in rest:
+            O.add_line_item(db, owner, o.id, product_id=products[pname].id, quantity=q, unit_price=p)
+        return o
+
+    priya, rafael, nadia = people["priya"], people["rafael"], people["nadia"]
+    c, d = clients, delivered
+    # Won and delivered: each linked to the engagement already under way.
+    for key, name, close_in, owner, items in [
+        ("bluefin", "Bluefin Tableau → Omni Migration", -110, nadia, [("Omni Migration", 1, "95000")]),
+        ("cobalt", "Cobalt Looker → Omni Migration", -75, rafael, [("Omni Migration", 1, "88000"),
+                                                                   ("Advisory hours", 40, None)]),
+        ("harbor", "Harbor & Pine Power BI → Omni", -12, nadia, [("Omni Migration", 1, "72000")]),
+        ("meridian", "Meridian QuickStart", -10, priya, [("QuickStart", 1, None)]),
+        ("northwind", "Northwind QuickStart 2026", -50, priya, [("QuickStart", 1, "32000")]),
+    ]:
+        o = opp(c[key], name, "closed_won", close_in, owner, items, source="Omni partner referral")
+        E.link_opportunity(db, admin, d[key].id, opportunity_id=o.id)
+    # Won, but nothing delivers it yet: shows up flagged on the pipeline, forecast and portfolio.
+    opp(c["cobalt"], "Cobalt Store Ops Dashboards — Phase 2", "closed_won", -3, rafael,
+        [("Dashboard build", 1, None), ("Advisory hours", 24, None)], source="Expansion")
+    # Lost.
+    opp(c["bluefin"], "Bluefin Claims Analytics Add-on", "closed_lost", -20, nadia, [("Dashboard build", 1, "45000")],
+        lost_reason="Budget moved to next fiscal year")
+    # Open pipeline, every stage.
+    opp(c["northwind"], "Northwind Advisory Retainer", "negotiation", 4, priya, [("Support retainer", 12, None)],
+        next_step="Redlines back from their legal", source="Expansion")
+    opp(juniper, "Juniper Tableau → Omni Migration", "proposal", 25, nadia,
+        [("Omni Migration", 1, "110000"), ("Advisory hours", 60, None)], forecast_category="commit",
+        next_step="Pricing review with their CFO", source="Inbound")
+    opp(atlas, "Atlas Freight QuickStart", "discovery", 40, rafael, [("QuickStart", 1, None)],
+        next_step="Technical discovery call", source="Omni partner referral")
+    opp(c["harbor"], "Harbor & Pine Support Retainer", "qualification", 70, rafael, [("Support retainer", 6, "5000")],
+        source="Expansion")
+    opp(c["meridian"], "Meridian Embedded Analytics", "prospecting", 120, nadia, [("Dashboard build", 1, "60000")],
+        source="Expansion")
+    # Slipped: its close date moved out, so it shows in the forecast's recent movement.
+    slipped = opp(c["northwind"], "Northwind Creator Training", "proposal", 12, priya, [("Advisory hours", 80, None)])
+    O.update_opportunity(db, priya, slipped.id, close_date=_d(55), next_step="They asked to start after peak season")
+
 
 def reset(db: Session) -> None:
     # events is append-only by trigger; the reset is a dev-only escape hatch that
     # disables it for this transaction.
     db.execute(text("ALTER TABLE events DISABLE TRIGGER USER"))
     db.execute(text(
-        "TRUNCATE events, deliverable_client_reviews, deliverable_comments, deliverable_activity, deliverable_blockers, deliverables, engagement_memberships, "
-        "engagements, client_contacts, client_aliases, clients, users"))
+        "TRUNCATE events, opportunity_line_items, products, opportunities, deliverable_client_reviews, deliverable_comments, deliverable_activity, deliverable_blockers, deliverables, engagement_memberships, "
+        "engagements, client_contacts, client_aliases, clients, user_access_roles, users"))
     db.execute(text("ALTER TABLE events ENABLE TRIGGER USER"))
 
 

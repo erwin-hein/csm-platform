@@ -7,12 +7,13 @@ from sqlalchemy.orm import Session
 from app.access import (
     get_editable_engagement,
     get_visible_client,
-    require_ops_or_admin,
+    get_visible_opportunity,
+    require_module,
     visible_engagements_stmt,
 )
 from app.errors import ValidationError
 from app.events import emit, mutation
-from app.models import ENGAGEMENT_STATUSES, Engagement, EngagementType, User
+from app.models import ENGAGEMENT_STATUSES, Engagement, EngagementType, Opportunity, User
 
 
 def list_engagement_types(db: Session) -> list[EngagementType]:
@@ -38,10 +39,13 @@ def list_visible_engagements(db: Session, user: User, *, type_key: str | None = 
 
 @mutation("engagement_created")
 def create_engagement(db: Session, actor: User, *, client_id: uuid.UUID, type_key: str, name: str,
-                      stage: str | None = None, started_on: date | str | None = None) -> Engagement:
-    """started_on lets an engagement that's already under way be entered with its real start date."""
-    require_ops_or_admin(actor)
+                      stage: str | None = None, started_on: date | str | None = None,
+                      opportunity_id: uuid.UUID | None = None) -> Engagement:
+    """started_on lets an engagement that's already under way be entered with its real start date.
+    opportunity_id links it to the won opportunity it delivers (CLAUDE.md §3 Opportunities)."""
+    require_module(actor, "engagements", "manage")
     client = get_visible_client(db, actor, client_id)
+    opp = _linkable_opportunity(db, actor, opportunity_id, client.id) if opportunity_id else None
     etype = get_engagement_type(db, type_key)
     name = name.strip()
     if not name:
@@ -66,12 +70,44 @@ def create_engagement(db: Session, actor: User, *, client_id: uuid.UUID, type_ke
             raise ValidationError("An engagement can't start in the future")
         started_at = datetime.combine(day, time(9), tzinfo=timezone.utc)
     engagement = Engagement(client_id=client.id, type_key=etype.key, name=name, stage=stage,
-                            status="active", started_at=started_at)
+                            status="active", started_at=started_at, opportunity_id=opp.id if opp else None)
     db.add(engagement)
     db.flush()
+    if opp:
+        db.expire(opp, ["engagements"])
     emit(db, entity_type="engagement", entity_id=engagement.id, event_type="engagement_created", actor=actor,
          payload={"client_id": client.id, "type_key": etype.key, "name": name, "stage": stage,
-                  "started_at": started_at})
+                  "started_at": started_at, "opportunity_id": opp.id if opp else None})
+    return engagement
+
+
+def _linkable_opportunity(db: Session, actor: User, opportunity_id: uuid.UUID, client_id: uuid.UUID) -> Opportunity:
+    opp = get_visible_opportunity(db, actor, opportunity_id)
+    if opp.client_id != client_id:
+        raise ValidationError("The opportunity belongs to a different client")
+    if not opp.is_won:
+        raise ValidationError("Only a Closed Won opportunity can be linked to an engagement")
+    return opp
+
+
+@mutation("engagement_opportunity_linked")
+def link_opportunity(db: Session, actor: User, engagement_id: uuid.UUID, *,
+                     opportunity_id: uuid.UUID | None) -> Engagement:
+    """Link an existing engagement to the won opportunity it delivers, or unlink it (None)."""
+    require_module(actor, "engagements", "manage")
+    engagement = get_editable_engagement(db, actor, engagement_id)
+    previous = engagement.opportunity_id
+    opp = _linkable_opportunity(db, actor, opportunity_id, engagement.client_id) if opportunity_id else None
+    if previous == (opp.id if opp else None):
+        raise ValidationError("Nothing to change")
+    engagement.opportunity_id = opp.id if opp else None
+    db.flush()
+    for oid in {previous, engagement.opportunity_id} - {None}:
+        o = db.get(Opportunity, oid)
+        if o is not None:
+            db.expire(o, ["engagements"])
+    emit(db, entity_type="engagement", entity_id=engagement.id, event_type="engagement_opportunity_linked",
+         actor=actor, payload={"opportunity_id": engagement.opportunity_id, "previous_opportunity_id": previous})
     return engagement
 
 

@@ -1,7 +1,7 @@
 <div class="spread" style="margin-bottom:16px">
   <div><h1>Team</h1>
     <div class="muted">{% if tab == 'people' %}Who's working on what, and who has room for more. Allocate people to engagements straight from their card.
-      {% else %}Who can see and work on each engagement. Analysts and contractors see only what they're assigned; ops and admin see everything.{% endif %}</div></div>
+      {% else %}Who can see and work on each engagement. People see only what they're assigned to, unless they have engagements:manage.{% endif %}</div></div>
   <div class="type-tabs">
     <a class="{{ 'on neutral' if tab == 'people' }}" href="/team">By person</a>
     <a class="{{ 'on neutral' if tab == 'engagements' }}" href="/team/engagements">By engagement</a>

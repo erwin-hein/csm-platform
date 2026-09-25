@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Forecast · {{ fc.period.label }}{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+{% set t = fc.total %}
+<div class="spread" style="margin-bottom: 14px">
+  <div>
+    <h1>Forecast · {{ fc.period.label }}</h1>
+    <div class="muted small">Opportunities closing {{ fc.period.start.strftime('%b %d') }} – {{ fc.period.end.strftime('%b %d, %Y') }}. USD.</div>
+  </div>
+  <form class="board-controls" method="get">
+    <label>Period
+      <select name="period" onchange="this.form.offset.value=0; this.form.requestSubmit()">{% for k, label in period_kinds.items() %}<option value="{{ k }}" {{ 'selected' if k == kind }}>{{ label }}</option>{% endfor %}</select></label>
+    <input type="hidden" name="offset" value="{{ offset }}">
+    <a class="btn small" href="/forecast?period={{ kind }}&offset={{ offset - 1 }}">‹ Previous</a>
+    {% if offset != 0 %}<a class="btn small" href="/forecast?period={{ kind }}">Current</a>{% endif %}
+    <a class="btn small" href="/forecast?period={{ kind }}&offset={{ offset + 1 }}">Next ›</a>
+  </form>
+</div>
+
+{% include "opportunities/_won_unlinked.html" %}
+
+<div class="fc-tiles">
+  <div class="fact good"><span>Closed won</span><b>{{ t.won | usd }}</b></div>
+  <div class="fact"><span>Commit forecast</span><b>{{ t.commit_forecast | usd }}</b><small>won + commit</small></div>
+  <div class="fact"><span>Best-case forecast</span><b>{{ t.best_case_forecast | usd }}</b><small>+ best case</small></div>
+  <div class="fact"><span>Open pipeline</span><b>{{ t.open_pipeline | usd }}</b><small>weighted {{ t.weighted_open | usd }}</small></div>
+  <div class="fact bad"><span>Lost</span><b>{{ t.lost | usd }}</b></div>
+</div>
+
+<div class="card flush" style="margin-top:16px">
+  <div class="section-head"><h2 style="margin:0">By owner</h2><span class="small muted">Commit forecast = closed won + commit. Best case adds best-case deals. Omitted deals are left out.</span></div>
+  <table class="fc-table">
+    <tr><th>Owner</th><th class="num">Deals</th><th class="num">Closed won</th><th class="num">Commit</th><th class="num">Best case</th><th class="num">Pipeline</th><th class="num">Weighted open</th><th class="num">Commit forecast</th><th class="num">Best-case forecast</th></tr>
+    {% for r in fc.rows + [t] %}
+    <tr class="{{ 'total' if loop.last }}">
+      <td>{% if loop.last %}<b>Total</b>{% else %}{{ r.label }}{% endif %}</td>
+      <td class="num">{{ r.count }}</td>
+      <td class="num">{{ r.won | usd }}</td>
+      <td class="num">{{ r.by_category['commit'] | usd }}</td>
+      <td class="num">{{ r.by_category['best_case'] | usd }}</td>
+      <td class="num">{{ r.by_category['pipeline'] | usd }}</td>
+      <td class="num muted">{{ r.weighted_open | usd }}</td>
+      <td class="num"><b>{{ r.commit_forecast | usd }}</b></td>
+      <td class="num"><b>{{ r.best_case_forecast | usd }}</b></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card flush" style="margin-top:16px">
+  <div class="section-head"><h2 style="margin:0">Outlook</h2><span class="small muted">this {{ kind }} and the next three</span></div>
+  <table>
+    <tr><th>Period</th><th class="num">Closed won</th><th class="num">Commit fcst</th><th class="num">Best case fcst</th><th class="num">Open pipeline</th><th class="num">Weighted</th></tr>
+    {% for p, r in outlook %}
+    <tr class="{{ 'on' if p == fc.period }}"><td><a href="/forecast?period={{ kind }}&offset={{ offset + loop.index0 }}">{{ p.label }}</a></td>
+      <td class="num">{{ r.won | usd }}</td><td class="num">{{ r.commit_forecast | usd }}</td><td class="num">{{ r.best_case_forecast | usd }}</td>
+      <td class="num">{{ r.open_pipeline | usd }}</td><td class="num muted">{{ r.weighted_open | usd }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="grid two" style="margin-top:16px">
+  <div class="card flush">
+    <div class="section-head"><h2 style="margin:0">Deals in {{ fc.period.label }}</h2></div>
+    <table>
+      <tr><th>Opportunity</th><th>Category</th><th class="num">Amount</th><th class="num">Weighted</th><th>Close</th></tr>
+      {% for o in fc.deals %}
+      <tr>
+        <td><a href="/opportunities/{{ o.id }}"><b>{{ o.name }}</b></a><div class="small muted">{{ o.client.name }} · {{ o.stage.label }}{% if o.owner %} · {{ o.owner.label }}{% endif %}</div></td>
+        <td><span class="fc-cat fc-{{ o.effective_forecast_category }}">{{ 'Lost' if o.is_closed and not o.is_won else FORECAST_CATEGORIES[o.effective_forecast_category] }}</span></td>
+        <td class="num">{{ o.amount | usd }}</td>
+        <td class="num muted">{{ '' if o.is_closed else (o.weighted_amount | usd) }}</td>
+        <td class="small {{ 'overdue' if o.is_overdue }}">{{ o.close_date.strftime('%b %d') }}</td>
+      </tr>
+      {% else %}<tr><td colspan="5" class="empty">Nothing closes in this period.</td></tr>{% endfor %}
+    </table>
+  </div>
+  <div class="stack">
+    <div class="card">
+      <h2>Recent movement <span class="small muted">last 14 days, all periods</span></h2>
+      <ul class="activity">
+        {% for m in movement[:25] %}
+        <li><div class="spread"><a href="/opportunities/{{ m.opportunity.id }}"><b>{{ m.opportunity.name }}</b></a><span class="small muted">{{ m.at.strftime('%b %d') }}</span></div>
+          <div class="mv mv-{{ m.kind }}">{{ m.text }}</div></li>
+        {% else %}<li class="muted small">No changes in the last two weeks.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

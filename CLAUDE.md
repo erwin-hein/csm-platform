@@ -28,7 +28,7 @@ An earlier attempt at this same rebuild stalled when a developer resource fell t
 | 3 | **Deliverables: one generalized tracking engine** | A single tree/pipeline structure (blockers, pipeline_status, enforced `kind` per type via a lookup table) serves any engagement type with trackable work units — migration phases/milestones/dashboards, QS curriculum modules, a retainer's initiatives. Replaces what would otherwise be N bespoke per-type tracking tables. |
 | 4 | **Meeting action items stay separate from deliverables** | Different origin (machine-extracted from transcripts vs. deliberately scoped), different lifecycle (flat open/done/dismissed vs. a real pipeline+blockers), different volume/noise profile. Bridged by an optional `action_items.promoted_to_deliverable_id` FK, never merged. |
 | 5 | **Event bus as the spine** | Append-only `events` table. Every state-mutating service function emits an event in the same transaction via one shared helper — not ad hoc per feature. Derived effects (health recompute, digests, checklists, notifications) are handlers subscribed by `event_type`, never direct cross-service calls into another module's tables. |
-| 6 | **Users & roles** | `user_type` (`internal` \| `client_external`). Internal `internal_role`: `analyst` (renamed from "CSM"), `contractor` (part-timers), `ops`, `admin`. Visibility/ownership lives on `engagement_memberships` (`owner`/`collaborator`/`viewer`), **not** at the Client level — a client-external viewer gets an explicit per-Engagement grant, never implicit access to everything under a Client. `ops`/`admin` bypass membership checks for portfolio-wide reporting. |
+| 6 | **Users & access** | `user_type` (`internal` \| `client_external`). Access has two independent axes. **Module access** (which areas of the app — engagements, opportunities, team, … — someone can enter) comes from named **access roles**: each grants `use` or `manage` per module, a user holds any number of roles, and the highest level wins, so any combination of modules works and a new module is one registry row plus grants. **Record access** inside a module: engagement visibility/ownership lives on `engagement_memberships` (`owner`/`collaborator`/`viewer`), **not** at the Client level — a client-external viewer gets an explicit per-Engagement grant, never implicit access to everything under a Client; `engagements:manage` bypasses membership for portfolio-wide work (what "ops" means throughout this doc). Opportunities are readable by anyone with the module and editable by their owner or `manage`. `is_admin` bypasses everything; `is_contractor` is an employment flag, not an access level. See §3 Identity & access. |
 | 7 | **Health** | Computed/cached per Engagement (`engagement_signals`), never hand-authored. Client-level health is a read-time rollup over its active Engagements' signals, never its own stored column (so one client with a thriving retainer and a stalled migration doesn't collapse into one misleading number). |
 | 8 | **Meeting resolution is two independently-nullable stages** | `meetings.client_id` then `meetings.engagement_id`. Client match: canonical name scan → curated alias fallback → domain match against **existing** clients only (refuse to guess at every tier — ported from Hao's system almost verbatim). Engagement match: exactly one active Engagement on the matched client → auto-assign; zero or 2+ → leave null (lands in the unassigned-meetings backfill screen either way — no smart disambiguation logic needed given concurrent engagements per client are expected to be rare). |
 | 9 | **Auto-discovery of new Clients/Engagements from sync: deferred out of v1** | See §4. Manual creation only, plus a manual "unassigned meetings" backfill/reassignment screen. An `ignored` flag on meetings stops permanently-irrelevant recurring calls (vendor stand-ups, etc.) from resurfacing every sync. |
@@ -38,7 +38,7 @@ An earlier attempt at this same rebuild stalled when a developer resource fell t
 | 13 | **Database** | Postgres (self-hosted via Render's managed Postgres), not SQLite. BigQuery explicitly ruled out as the operational/OLTP store (wrong latency/cost/transaction model for a chatty CRUD app) — a plausible **future** downstream analytics sink fed *from* Postgres, not built now. |
 | 14 | **Claude/LLM billing** | Single **org-level Anthropic API key** for the whole app (not per-user subscription OAuth à la Hao's `claude setup-token` hack, not per-user/per-workspace API keys) — chosen pragmatically given ops/finance uncertainty about how the company wants this billed. Per-user cost attribution kept independently in an app-level `llm_usage` log regardless of the shared credential, so this is reversible later (splitting into per-user/per-workspace keys) without touching anything above the credential-resolution layer. Two-tier model choice, per-feature budget/timeout discipline, and cache-first-never-on-GET are all explicitly ported principles from Hao's `llm.py`. |
 | 15 | **LLM content generation is opt-in, per-user default + per-engagement override, per-kind** | See §3 `llm_content_preferences`. Default is **off** (a real spend-control lever, not a feature everyone must opt out of) — absence of a preference row cascades to "disabled," so a brand-new user starts with everything off until they explicitly enable specific kinds. |
-| 16 | **Authentication** | Hand-rolled (not a managed provider like WorkOS), chosen for MVP speed since internal users are the near-term priority and external users are out of scope for now anyway. **Internal** (`analyst`/`contractor`/`ops`/`admin`): Google OAuth restricted to `@shearwaterdata.com`, verified server-side (the `hd` hint is not enforcement). **External** (`client_external`): passwordless email magic-link owned entirely by the app — deferred until the client-portal work begins (see §4), since it's the same piece of work as that feature. First-login bootstrap via an `ADMIN_EMAILS` env var seeding initial `internal_role='admin'` rows (avoids a chicken-and-egg problem); everyone else defaults to `analyst`. Session = signed httponly secure cookie holding the user id. CSRF via origin/referer check on state-changing routes, same principle as Hao's tool. Worth carrying over conceptually (not yet built): Hao's actor-vs-scope split for admin "act as another user" impersonation with audit trail. **Demo login**: a passcode-gated `/demo-login`, off unless `DEV_LOGIN_PASSCODE` is set, lets demos sign in as seeded users who have no Google account; it runs through the same user-resolution path (domain rule + `ADMIN_EMAILS` bootstrap) as Google sign-in. Admin impersonation above is the long-term replacement. |
+| 16 | **Authentication** | Hand-rolled (not a managed provider like WorkOS), chosen for MVP speed since internal users are the near-term priority and external users are out of scope for now anyway. **Internal** users: Google OAuth restricted to `@shearwaterdata.com`, verified server-side (the `hd` hint is not enforcement). **External** (`client_external`): passwordless email magic-link owned entirely by the app — deferred until the client-portal work begins (see §4), since it's the same piece of work as that feature. First-login bootstrap via an `ADMIN_EMAILS` env var seeding initial `is_admin` users (avoids a chicken-and-egg problem); everyone else gets the default access roles (`access_roles.is_default`; Delivery out of the box). Session = signed httponly secure cookie holding the user id. CSRF via origin/referer check on state-changing routes, same principle as Hao's tool. Worth carrying over conceptually (not yet built): Hao's actor-vs-scope split for admin "act as another user" impersonation with audit trail. **Demo login**: a passcode-gated `/demo-login`, off unless `DEV_LOGIN_PASSCODE` is set, lets demos sign in as seeded users who have no Google account; it runs through the same user-resolution path (domain rule + `ADMIN_EMAILS` bootstrap) as Google sign-in. Admin impersonation above is the long-term replacement. |
 | 17 | **OAuth/connections** (Calendar, Fathom, Harvest, Slack, Gmail) | Per-user-per-provider token storage, same shape as Hao's `connections` table, FK'd to real `users.id` instead of email strings. Gmail added for CSAT delivery (draft-only, `gmail.compose` scope, never a send scope). **Notion is the one exception** — org-level, not per-user (single admin-configured token, one shared company workspace being read), same reasoning as the single Claude API key. See §3 Knowledge base. |
 | 18 | **Background jobs** | A real job queue (Celery/RQ-class), replacing Hao's LaunchAgent/cron/daemon-thread pattern — needed given multiple analysts' syncs running concurrently on a shared server rather than one person's Mac. |
 | 19 | **Migration tooling** | Alembic (implied by "real Postgres migrations," not yet exercised in detail). |
@@ -53,17 +53,35 @@ This is the accumulated, corrected schema — later refinements in this document
 
 ```sql
 CREATE TYPE user_type AS ENUM ('internal', 'client_external');
-CREATE TYPE internal_role AS ENUM ('analyst', 'contractor', 'ops', 'admin');
 
 CREATE TABLE users (
   id UUID PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
   display_name TEXT,
   user_type user_type NOT NULL,
-  role internal_role,                 -- NULL for client_external
+  is_admin BOOLEAN NOT NULL DEFAULT false,       -- bypasses every module and record check; the only one who edits access
+  is_contractor BOOLEAN NOT NULL DEFAULT false,  -- an employment fact, not an access level (read by the client-invite rule)
   llm_content_default BOOLEAN,        -- deprecated by llm_content_preferences, see below; kept here only as a note, not a real column
   status TEXT DEFAULT 'active',
   created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Module access (see §6, 2026-09-25): which areas of the app a user can enter.
+CREATE TABLE modules (key TEXT PRIMARY KEY, label TEXT NOT NULL, sort_order INT);   -- 'engagements' | 'opportunities' | 'team'
+CREATE TABLE access_roles (
+  id UUID PRIMARY KEY, name TEXT UNIQUE NOT NULL, description TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT false,   -- granted to every new internal user on first login
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE access_role_grants (
+  role_id UUID REFERENCES access_roles(id) ON DELETE CASCADE,
+  module_key TEXT REFERENCES modules(key),
+  level TEXT NOT NULL,                         -- 'use' | 'manage'
+  PRIMARY KEY (role_id, module_key)
+);
+CREATE TABLE user_access_roles (
+  user_id UUID REFERENCES users(id), role_id UUID REFERENCES access_roles(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, role_id)
 );
 
 CREATE TYPE membership_role AS ENUM ('owner', 'collaborator', 'viewer');
@@ -78,14 +96,31 @@ CREATE TABLE engagement_memberships (
 CREATE UNIQUE INDEX uq_engagement_memberships_one_owner ON engagement_memberships (engagement_id) WHERE role = 'owner';
 ```
 
-**Permission model** (internal users):
-- **Read** an engagement and its deliverables: any membership role, or `ops`/`admin`.
-- **Edit** deliverables and move stage/status: `owner` or `collaborator` membership, or `ops`/`admin`. `viewer` is read-only, except for commenting.
+**Module access.** A user's level on a module is the highest any of their access roles grants (`use` < `manage`); admin is `manage` everywhere; client users never hold module access (the portal is separate). With no access to a module, its pages and records 404 and navigation doesn't offer it; `use` where `manage` is needed is a 403. Seeded roles, all admin-editable on the Access screen:
+
+| Role | engagements | opportunities | team | Notes |
+|---|---|---|---|---|
+| Operations | manage | manage | manage | what `ops` used to be |
+| Delivery | use | | | the default role; what `analyst` used to be |
+| Sales | | use | | |
+| Sales lead | | manage | | |
+| Resourcing | | | manage | allocates people from the Team screens |
+
+What each level means per module:
+- **engagements** — `use`: the engagements you're a member of. `manage` ("ops" elsewhere in this doc): every engagement regardless of membership, create engagements, manage teams, link engagements to won opportunities.
+- **opportunities** — `use`: read every opportunity (pipeline transparency on a small team), create and edit your own. `manage`: edit and reassign any, maintain the product catalog.
+- **team** — `use`: the Team capacity screens, read-only. `manage`: allocate people to engagements from them (granting memberships), whether or not you're on those engagements.
+- **Clients are shared** by both modules: `engagements:manage` or `opportunities:use` see and create every client (prospects included) and add aliases/contacts; anyone else sees a client only through an engagement they're on.
+- **Event log**: admins see all of it; otherwise it needs `manage` on a module, and shows only that module's events.
+
+**Permission model** (engagement records, internal users):
+- **Read** an engagement and its deliverables: any membership role, or `engagements:manage`.
+- **Edit** deliverables and move stage/status: `owner` or `collaborator` membership, or `engagements:manage`. `viewer` is read-only, except for commenting.
 - **Comment** (internal notes in `deliverable_activity`): anyone who can see the deliverable, `viewer` included. Commenting is low-stakes, the same reasoning as the portal's comment threads.
-- **Create** clients and engagements, add aliases/contacts, and **manage memberships**: `ops`/`admin` only.
+- **Create** engagements: `engagements:manage`. **Manage memberships**: `engagements:manage` or `team:manage`; only people with engagements access can be made members.
 - A user with no visibility gets a 404, never a 403, so an engagement's existence doesn't leak; a `viewer` attempting an edit gets a 403.
 
-**Team capacity view** (ops/admin): assignments grouped per person, used to judge who has room for more work, with allocation (granting memberships) done from the same screen. Load is built only from data that exists: memberships on open (`active`/`paused`) engagements, plus each person's open assigned deliverables (count, summed `hours_estimated`, overdue and due within 14 days by `target_date`). It's planned work, not logged time; once `time_entries` exist, actual hours can sit alongside it.
+**Team capacity view** (`team` module): assignments grouped per person, used to judge who has room for more work, with allocation (granting memberships, `team:manage`) done from the same screen. Only people with engagements access are listed. Load is built only from data that exists: memberships on open (`active`/`paused`) engagements, plus each person's open assigned deliverables (count, summed `hours_estimated`, overdue and due within 14 days by `target_date`). It's planned work, not logged time; once `time_entries` exist, actual hours can sit alongside it.
 
 > Note: `users.llm_content_default` as a flat boolean was an intermediate design, **superseded** by the per-kind `llm_content_preferences` table below. Do not implement the flat column.
 
@@ -173,6 +208,7 @@ CREATE TABLE engagements (
   expected_scope JSONB,                -- generalizes Hao's expected_phases
   health TEXT,                         -- cached, recomputed — never hand-written
   details JSONB DEFAULT '{}',          -- type-specific payload while storage_mode='jsonb'
+  opportunity_id UUID REFERENCES opportunities(id),   -- the won opportunity it delivers, if any (see Opportunities)
   llm_content_override BOOLEAN,        -- deprecated by llm_content_preferences, see below; do not implement
   started_at TIMESTAMPTZ, ended_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now()
@@ -280,6 +316,56 @@ CREATE TABLE deliverable_client_reviews (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 ```
+
+### Opportunities (CRM)
+
+The tip of the CRM iceberg: deals on the same Clients the engagements belong to, Salesforce/HubSpot-style stage control and forecasting. Separate from engagements, bridged when a deal is won. USD only for now (no currency column).
+
+```sql
+CREATE TABLE opportunity_stages (           -- the configurable pipeline; placeholder list, easy to change before real data
+  key TEXT PRIMARY KEY, label TEXT NOT NULL, sort_order INT NOT NULL,
+  default_probability INT NOT NULL,          -- 0-100
+  forecast_category TEXT NOT NULL,           -- 'pipeline' | 'best_case' | 'commit' | 'closed' | 'omitted'
+  is_closed BOOLEAN NOT NULL, is_won BOOLEAN NOT NULL
+);
+-- prospecting 10% pipeline · qualification 20% pipeline · discovery 40% pipeline · proposal 60% best_case
+-- · negotiation 80% commit · closed_won 100% closed · closed_lost 0% omitted
+
+CREATE TABLE products (
+  id UUID PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+  pricing_model TEXT NOT NULL,               -- 'fixed_bid' (per project) | 'time_and_materials' (per hour) | 'retainer' (per month)
+  default_unit_price NUMERIC(12,2),
+  engagement_type_key TEXT REFERENCES engagement_types(key),   -- what it's delivered as, if anything
+  active BOOLEAN NOT NULL DEFAULT true, created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE opportunities (
+  id UUID PRIMARY KEY,
+  client_id UUID NOT NULL REFERENCES clients(id),   -- a prospect is an ordinary clients row with no engagement yet
+  name TEXT NOT NULL,
+  owner_user_id UUID REFERENCES users(id),          -- one owner; must have opportunities access
+  stage_key TEXT NOT NULL REFERENCES opportunity_stages(key),
+  probability INT,                                  -- override while open; NULL = the stage's default
+  forecast_category TEXT,                           -- override while open; NULL = the stage's default
+  close_date DATE NOT NULL,                         -- expected while open; the actual date once closed
+  next_step TEXT, source TEXT, lost_reason TEXT,
+  closed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE opportunity_line_items (
+  id UUID PRIMARY KEY, opportunity_id UUID NOT NULL REFERENCES opportunities(id),
+  product_id UUID NOT NULL REFERENCES products(id),
+  quantity NUMERIC(12,2) NOT NULL, unit_price NUMERIC(12,2) NOT NULL, description TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+- **Amount is derived, never stored**: the sum of `quantity × unit_price` over the line items. Every opportunity has at least one line item: it's created with one and the last can't be removed. A line item keeps its own price, so editing a product never reprices a deal. Weighted amount = amount × effective probability.
+- **Stage control, deliberately minimal**: Closed Lost needs a `lost_reason`. Closing sets `close_date` to today (so a deal lands in the period it actually closed) and `closed_at`; reopening clears `closed_at`. Closed stages fix probability and category (won 100 / closed, lost 0 / omitted); overrides only apply while open and survive a reopen. More exit criteria can come once there's real process to encode.
+- **Pipeline board**: one column per stage with count, $ total and weighted total, cards moved with an inline stage picker. This is a deliberate exception to the engagement boards' "no stage columns" rule: a sales stage is linear, an opportunity sits in exactly one. Closed columns are hidden by default; filter by owner.
+- **Forecast board**: opportunities whose close date falls in a month or quarter, by owner × forecast category, raw and weighted, with the usual cumulative calls — **commit forecast** = closed won + commit, **best-case forecast** = that + best case; omitted and lost stay out. An outlook row per upcoming period, the period's deal list, and **recent movement** (new deals, stage moves, won/lost, close dates slipped or pulled in, amount changes) read straight from the opportunity events' before/after payloads. Quotas are deferred (§4).
+- **Won → engagement bridge** (bridged, never merged, like action items → deliverables): `engagements.opportunity_id` links an engagement to the won opportunity it delivers; one opportunity can have several. `engagements:manage` creates an engagement from a won opportunity (client, name and type prefilled from the first product that is delivered as an engagement type) or links an existing one on the same client. **A Closed Won opportunity with no linked engagement is flagged** on the pipeline, the forecast and (for `engagements:manage`) the portfolio until one exists — a handoff that hasn't happened.
+- **Events**: every opportunity, line-item and product change emits an event with before/after values (`opportunity_created`, `opportunity_stage_changed`, `opportunity_updated`, `opportunity_line_item_added/updated/removed`, `product_created/updated`, `engagement_opportunity_linked`).
 
 ### Meetings & action items
 
@@ -674,6 +760,8 @@ The reference tool's one-invariant-per-file convention (filename = the pinned co
 | Per-user/per-workspace Claude API keys | Ops/Finance haven't decided how they want AI spend billed; a single org key + per-user `llm_usage` log keeps the decision reversible without any rework. | Finance wants true chargeback, or per-team budget ceilings. |
 | Managed auth-as-a-service (e.g. WorkOS) | Hand-rolled Google OAuth is faster to ship for the internal-only MVP. | If/when the external-auth build turns out heavier than expected, worth revisiting. |
 | Granular per-field portal visibility toggles (à la the reference tool's `client_portal_visibility`) | Portal ships Deliverables-only for now; that's speculative flexibility with no demand behind it yet. | A specific engagement needs to expose something beyond deliverables. |
+| Sales quotas / attainment | Forecasting works without them; Erwin: later. | Sales wants attainment against targets on the forecast board. |
+| Multi-currency opportunities | USD only for now (Erwin); amounts carry no currency. | A deal is priced in another currency. |
 | Cert/training module | Explicitly cut from MVP scope by Erwin — not merely low-priority, a decided no. | Not currently expected to revisit; would need a fresh ask if training/certification becomes a real product need. |
 
 ---
@@ -684,7 +772,9 @@ Every v1 design item was settled as of 2026-09-24. This section holds whatever s
 
 The six items surfaced during the PoC build (2026-09-24) were all resolved the same day and folded into §2/§3 — see §6.
 
-Items raised during the post-PoC iterations (concurrent stages, the portal slice) were resolved and folded into §3 — see §6. **None open.**
+Items raised during the post-PoC iterations (concurrent stages, the portal slice) were resolved and folded into §3 — see §6.
+
+The CRM slice and module-based access (raised 2026-09-25) were resolved the same day and folded into §2/§3 — see §6. **None open.**
 
 ---
 
@@ -730,3 +820,8 @@ Dated entries for traceability — why something is the way it is, in case it's 
   - **Dashboards tracked by count.** Erwin's concern was that listing every tile of a large dashboard is too much of a lift, and the system would go unused. Parents of `bulk_child_counts` kinds now track unlisted children as per-status counts, with only troublesome tiles listed individually; both fold into the same rollup (his example: a 99-tile dashboard with 2 listed tiles and 97 counted).
   - **Client access.** Provisioning it from the Team/allocation area would bottleneck on ops, whose job is higher-level (engagement health, team allocation, relations). Client access now lives in its own panel on the engagement page and is limited to admin, ops, or the engagement's owner, not collaborators or contractors.
 - **Boards redesigned as cards with grouping and sorting (2026-09-25)**: Erwin disliked the by-stage kanban inherited from Hao's tool. It's clunky for people with many engagements, migrations don't map onto stage columns (and some teams use phases as sprints), and each board repeated a type switcher the top nav already provides. Replaced with one big card per engagement, which the viewer can group (none / stage / client / owner) and sort (closest deadline / alphabetical / longest running / stage), and the duplicate switcher was removed. Stage grouping stays the default only where stages are hand-set and linear (quickstart), a rule derived from the type rather than hard-coded. `started_at` became settable at creation so "longest running" is meaningful for engagements entered mid-flight.
+- **Module-based access and the CRM slice (2026-09-25)**, at Erwin's request:
+  - **Access.** Erwin asked whether sales needed a new membership type, or access should move to "modules", since some people need opportunities + team + engagements, some only engagements, and so on, and he wanted the version that scales best to future modules. Settled as two independent axes. *Module access* comes from named access roles that grant `use` or `manage` per module; a user holds any number and the highest level wins, so every combination is expressible, and a new module is one registry row plus grants. *Record access* inside a module stays where it was (engagement memberships) or is ownership (opportunities). A "sales" membership role was rejected because it would mix the two axes, and per-user toggles because every new module would mean touching every user, with no named bundle recording why someone has what. `internal_role` went away: ops became the Operations role, analyst became Delivery (the default role), admin became `is_admin`, and contractor became `is_contractor`, since it's an employment fact, not an access level.
+  - **Opportunities.** Separate from engagements, on the same Clients (prospects are just clients). Products (fixed bid, T&M, retainer) as line items, at least one per deal, and the amount is always their sum. Erwin's calls: reps read all pipeline and edit their own, sales leads edit and reassign any (the use/manage split); quotas later; USD only; add a won → engagement bridge **and flag won deals with no linked engagement**; keep stage rules minimal for now (only Closed Lost needs a reason); the stage list is a placeholder (Prospecting → Negotiation, Closed Won/Lost with Salesforce-style probabilities), easy to change before real data goes in.
+  - **Boards.** A pipeline board with stage columns, the one deliberate exception to the card boards, since a sales stage is linear. A forecast board by period, owner and forecast category, raw and weighted, with movement read from the events spine rather than snapshot tables.
+- **Schema explorer as a PoC demo aid (2026-09-25)**, at Erwin's request, since the schema is where most of the design went and what future iterations keep. An admin-only interactive diagram (`/admin/schema`) built from two sources, so it can't go stale: the live database (tables, keys, constraints, triggers, row counts) and this document's §3 (sections, SQL comments, and the tables designed but not built). It also shows where the two disagree. A test fails if a table exists in the database without being described in §3, which turns "this file is the source of truth" into a check rather than a convention. Not a product feature; removable with the demo.

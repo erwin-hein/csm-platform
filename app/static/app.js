@@ -31,3 +31,24 @@ document.addEventListener('click', e => {
   const dlg = document.getElementById('chat-dialog');
   if (dlg && e.target === dlg) dlg.close();   // click on the backdrop closes it
 });
+
+// Opportunities: moving to Closed Lost asks for the reason the server requires.
+function oppLostReason(form) {
+  const reason = prompt('Why was it lost?');
+  if (!reason) return false;
+  form.querySelector('[name=lost_reason]').value = reason;
+  return true;
+}
+function oppStage(sel) {
+  if (sel.value === 'closed_lost' && !oppLostReason(sel.form)) {
+    sel.value = sel.querySelector('option[selected]').value;
+    return;
+  }
+  sel.form.requestSubmit();
+}
+// New opportunity: show the product's default price and unit.
+function npPrice(sel) {
+  const o = sel.selectedOptions[0], price = document.getElementById('np-price');
+  price.placeholder = o && o.dataset.price ? o.dataset.price : 'required';
+  document.getElementById('np-unit').textContent = o && o.dataset.unit ? '(' + o.dataset.unit + 's)' : '';
+}
