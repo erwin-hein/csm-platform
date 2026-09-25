@@ -9,12 +9,12 @@ from tests.conftest import login
 
 def test_capacity_counts_open_work_per_person(db, world):
     today = date(2026, 9, 24)
-    p = deliverables.create_deliverable(db, world.admin, world.alice_eng.id, kind="phase", name="P",
+    p = deliverables.create_deliverable(db, world.admin, world.alice_eng.id, kind="phase", name="P", stage_key="scoping",
                                         internal_assignee_user_id=world.alice.id, hours_estimated="6",
                                         target_date=today - timedelta(days=1))
-    deliverables.create_deliverable(db, world.admin, world.alice_eng.id, kind="phase", name="Q",
+    deliverables.create_deliverable(db, world.admin, world.alice_eng.id, kind="phase", name="Q", stage_key="scoping",
                                     internal_assignee_user_id=world.alice.id, target_date=today + timedelta(days=3))
-    done = deliverables.create_deliverable(db, world.admin, world.alice_eng.id, kind="phase", name="Done",
+    done = deliverables.create_deliverable(db, world.admin, world.alice_eng.id, kind="phase", name="Done", stage_key="scoping",
                                            internal_assignee_user_id=world.alice.id, hours_estimated="10")
     deliverables.update_deliverable(db, world.admin, done.id, pipeline_status="done")
     engagements.change_status(db, world.admin, world.globex_eng.id, status="complete")

@@ -10,14 +10,14 @@ from app.services import deliverables as D
 
 def test_kind_must_belong_to_engagement_type(db, world):
     with pytest.raises(ValidationError, match="isn't a QuickStart deliverable kind"):
-        D.create_deliverable(db, world.admin, world.bob_eng.id, kind="phase", name="Phase on a QS")
+        D.create_deliverable(db, world.admin, world.bob_eng.id, kind="phase", name="Phase on a QS", stage_key="scoping")
     with pytest.raises(ValidationError, match="isn't a Migration deliverable kind"):
         D.create_deliverable(db, world.admin, world.alice_eng.id, kind="module", name="Module on a migration")
 
 
 def test_child_kinds_require_the_right_parent(db, world):
     eid = world.alice_eng.id
-    phase = D.create_deliverable(db, world.admin, eid, kind="phase", name="Phase")
+    phase = D.create_deliverable(db, world.admin, eid, kind="phase", name="Phase", stage_key="scoping")
     dash = D.create_deliverable(db, world.admin, eid, kind="dashboard", name="Dash")
     with pytest.raises(ValidationError, match="must sit under a phase"):
         D.create_deliverable(db, world.admin, eid, kind="milestone", name="Orphan")
@@ -63,7 +63,7 @@ def test_engagement_tree_differs_by_type(db, world):
 
 def test_progress_rolls_up_from_children_and_skips_not_applicable(db, world):
     eid = world.alice_eng.id
-    phase = D.create_deliverable(db, world.admin, eid, kind="phase", name="P")
+    phase = D.create_deliverable(db, world.admin, eid, kind="phase", name="P", stage_key="scoping")
     m1 = D.create_deliverable(db, world.admin, eid, kind="milestone", name="m1", parent_id=phase.id)
     m2 = D.create_deliverable(db, world.admin, eid, kind="milestone", name="m2", parent_id=phase.id)
     m3 = D.create_deliverable(db, world.admin, eid, kind="milestone", name="m3", parent_id=phase.id)

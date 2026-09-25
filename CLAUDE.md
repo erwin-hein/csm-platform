@@ -122,9 +122,16 @@ CREATE TABLE engagement_types (
   key TEXT PRIMARY KEY,                -- 'quickstart' | 'migration' | 'support_retainer' | ...
   display_name TEXT,
   storage_mode TEXT NOT NULL,          -- 'jsonb' | 'graduated'
-  stage_vocab JSONB NOT NULL           -- ordered [{key,label}], drives board columns
+  stage_vocab JSONB NOT NULL,          -- ordered [{key,label}], drives board columns
+  stage_kind TEXT,                     -- the deliverable kind that stands for stages (migration → 'phase'); NULL = stage set by hand
+  FOREIGN KEY (key, stage_kind) REFERENCES deliverable_kinds(engagement_type_key, kind)
 );
 ```
+
+**Stages — one mechanism for every type, and stages can run concurrently.** Every engagement has a *set* of active stages; a "linear" type is simply one whose work happens to run one stage at a time, so there is no sequential/concurrent switch. Each stage is `done`, `active`, `upcoming` or `empty` (nothing planned), always derived, never stored:
+- **Type with a `stage_kind`** (migration → phase): each deliverable of that kind carries the `stage_key` it stands for. A stage is `done` when all its linked deliverables are finished (done or N/A), `active` when any of them (or any of their children) has started, `upcoming` when they all exist but none has started, and `empty` when none is linked. Several stages can be active at once, and nothing is moved by hand: `engagements.stage` is NULL for these types, and a stage-kind deliverable must name its stage. When a deliverable change moves a stage's state, a `stage_state_changed` event records it, so the spine still sees stage movement.
+- **Type without one** (quickstart, whose curriculum modules don't map onto its stages): the hand-set `engagements.stage` decides. Stages before it are done, it is active, the rest are upcoming; moving it emits `stage_changed`.
+- The board shows an engagement's card in **every** active column. With nothing active, it goes to the first stage that isn't done.
 
 **The two core types' vocabularies, drafted now** (a loose end flagged earlier in this document, resolved once PoC seed data made it concrete) — grounded in the reference tool's actual stage/kind vocabulary, not invented from scratch:
 
@@ -151,7 +158,7 @@ CREATE TABLE engagements (
   client_id UUID REFERENCES clients(id),
   type_key TEXT REFERENCES engagement_types(key),
   name TEXT NOT NULL,                  -- "Omni Migration — 2026" etc, since a client can have several over time
-  stage TEXT NOT NULL,                 -- validated app-side against the type's stage_vocab
+  stage TEXT,                          -- hand-set stage, only for types without a stage_kind (validated against stage_vocab); NULL otherwise
   status TEXT DEFAULT 'active',        -- active | paused | complete | cancelled
   slack_channel_id TEXT,               -- engagement-scoped, ephemeral by design — client-facing channel
   internal_slack_channel_id TEXT,      -- engagement-scoped internal back-channel (never client-facing, never feeds client_contacts)
@@ -177,6 +184,8 @@ CREATE TABLE deliverable_kinds (
   kind TEXT NOT NULL,
   display_name TEXT,
   parent_kind TEXT,                    -- which kind may parent this one; NULL = a root (top-level) kind
+  client_visible BOOLEAN NOT NULL DEFAULT false,     -- see Client-facing portal
+  bulk_child_counts BOOLEAN NOT NULL DEFAULT false,  -- parents of this kind may track children by count (below)
   PRIMARY KEY (engagement_type_key, kind),
   FOREIGN KEY (engagement_type_key, parent_kind) REFERENCES deliverable_kinds(engagement_type_key, kind)
 );
@@ -212,6 +221,8 @@ CREATE TABLE deliverables (
   client_owner_user_id UUID REFERENCES users(id),        -- who owns client-side QA/validation/sign-off (typically client_external) — independent of the above, both nullable
   priority TEXT, target_date DATE,
   hours_estimated NUMERIC,
+  stage_key TEXT,                      -- for the type's stage_kind only: which stage this deliverable stands for
+  child_counts JSONB,                  -- bulk-count parents only: {pipeline_status: n} for children not listed individually
   created_at TIMESTAMPTZ DEFAULT now(),
   FOREIGN KEY (engagement_type_key, kind) REFERENCES deliverable_kinds(engagement_type_key, kind)
 );
@@ -224,6 +235,8 @@ CREATE TABLE deliverable_blockers (
 );
 
 ```
+
+**Children tracked by count** (`bulk_child_counts`; migration dashboards). A big dashboard shouldn't need every tile typed in to be tracked. The parent carries per-status counts for the children *not* listed individually (e.g. 3 done, 2 in progress, 92 not started), and only the troublesome ones are listed as real child deliverables with their own status, blockers and threads. Progress and rollups add both together (2 listed + 97 counted = 99 tiles). Listing a new child takes one out of the parent's "not started" count, so the total stays the same. Counts are edited by anyone who can edit the deliverable, and each change is an event and an activity entry. In the portal, counted totals roll up only for `full`-scope viewers; an `assigned_only` user sees just the listed items they own.
 
 **`dep_state`** — derived at read time from the manual `blocked` flag plus the blocker edges; "finished" means `pipeline_status='done'` or `not_applicable`:
 - `blocked` — manually flagged, and either no blocker edges or at least one unfinished blocker.
@@ -507,7 +520,7 @@ CREATE TABLE magic_link_tokens (
 );
 ```
 
-Flow: request → the app responds identically ("if that email has access, a link has been sent") whether or not the email actually has an account, to avoid a user-enumeration side channel → emailed link → click → validate unused+unexpired → session cookie, same session mechanism internal users get. Revocation is just deleting the `engagement_memberships` row; the `client_external` user account persists (same as an internal analyst losing ownership doesn't delete their account). Invite action is gated the same way other engagement-scoped actions are: owner/collaborator on that engagement, or ops/admin.
+Flow: request → the app responds identically ("if that email has access, a link has been sent") whether or not the email actually has an account, to avoid a user-enumeration side channel → emailed link → click → validate unused+unexpired → session cookie, same session mechanism internal users get. Revocation is just deleting the `engagement_memberships` row; the `client_external` user account persists (same as an internal analyst losing ownership doesn't delete their account). Invite action is gated to admin, ops, or the engagement's owner (see "How the PoC implements the portal" below).
 
 **What's visible — Deliverables only, deliberately narrow.** Engagement name/stage, and its **client-visible** deliverables (name, kind, `pipeline_status`, blocked/blocked_reason, target_date, rolled-up progress). Which kinds are client-visible is declared per type in `deliverable_kinds.client_visible` (below); a type with no client-visible kinds has no portal or client view at all. Not shown: `deliverable_activity` (internal-only, see below), meetings, action items, health, hours/burn, or the contact roster — health specifically because it's an internal risk signal, not something to editorialize to a client about their own relationship. No granular per-field visibility-toggle system (the reference tool's `client_portal_visibility`) — that's speculative flexibility for later, once there's real demand for exposing something beyond this.
 
@@ -563,7 +576,7 @@ The same predicate gates `deliverable_comments` and `deliverable_client_reviews`
 **How the PoC implements the portal:**
 - **Structurally separate.** Client users get their own `/portal` routes and templates. Every internal route and internal access check rejects `client_external` users outright, whatever memberships they hold; a client user landing on an internal URL is sent to `/portal`, and an internal user landing on `/portal` is sent to `/`.
 - **Two channels, clearly labelled.** On the internal side, each client-visible deliverable shows two channels: *Internal notes* (`deliverable_activity`, labelled "never visible to clients") and the *Client thread* (`deliverable_comments`, labelled "visible to the client"). Client users only ever see the client thread. The engagement page gets an Internal / Client view tab pair; Client view previews exactly what a `full`-scope client user sees.
-- **Invitations.** Owners/collaborators (or ops/admin) invite one of the client's `client_contacts` (by email) from the engagement's team panel, choosing `full` or `assigned_only`. The invite creates the `client_external` account on first use (a `viewer` membership), and the same panel changes scope or revokes access. `client_owner_user_id` can only point at a client user with access to that engagement, on a client-visible kind.
+- **Invitations — per engagement, by admin, ops or the engagement's owner.** Client access lives in its own panel on the engagement page, not on the Team screens, so ops isn't a bottleneck for granular per-engagement access. Admin, ops, or the engagement's owner (not collaborators, viewers or contractors) invite one of the client's `client_contacts` (by email), choosing `full` or `assigned_only`. The invite creates the `client_external` account on first use (a `viewer` membership), and the same panel changes scope or revokes access. `client_owner_user_id` can only point at a client user with access to that engagement, on a client-visible kind.
 - **Login.** Client users sign in through the passcode-gated demo login for now. The magic-link flow (`magic_link_tokens`, above) waits until an email provider is chosen.
 
 This is what drove splitting `deliverables.assignee_user_id` into two independent columns (see §3 Deliverables) — one internal-facing (who's doing the work), one client-facing (who owns validation/sign-off) — since the same deliverable routinely has both, from two different organizations, and a single column couldn't represent that.
@@ -609,7 +622,7 @@ CREATE TABLE rule_firings (            -- cooldown tracking only — one row per
 
 **Definitions are a shared, admin-editable playbook; execution and cooldown are per-Engagement, never per-viewer.** A rule evaluates against one engagement's state once per cycle regardless of how many people (analyst, ops, admin) can see that engagement — visibility of the result is computed separately, at read time, via the usual `engagement_memberships`/role-bypass rules. More viewers costs nothing extra on the evaluation side.
 
-- **`stage_age`** needs no new timestamp column — it's "days since the last `stage_changed` event for this engagement," read straight from `events`. The event bus doing real work as a spine, not just an audit trail.
+- **`stage_age`** needs no new timestamp column — it's "days since this stage went active", read straight from `events` (`stage_changed` for hand-set types, `stage_state_changed` for derived ones), per stage now that several can be active at once. The event bus doing real work as a spine, not just an audit trail.
 - **`no_touchpoint` / `hours_burn` / `checklist_overdue`** reuse `engagement_signals`, `time_entries`, and `deliverables.pipeline_status` — no new inputs.
 - **`on_event`** rules don't get polled at all — they register as ordinary event-bus handlers, reacting immediately. Everything else runs off a scheduled job (the existing job queue), checking `rule_firings.cooldown_until` before re-evaluating.
 - **`raise_alert`** is just another `events` row (`event_type='rule_alert_raised'`, payload carries the message) — a dashboard is nothing more than "recent alert events for engagements I can see." No dedicated alert table. A "mark at risk" severity is a tag on this event's payload, **never a write to any health-adjacent column** — health stays fully derived, a rule can flag something loudly but can't hand-author the number itself.
@@ -664,9 +677,7 @@ Every v1 design item was settled as of 2026-09-24. This section holds whatever s
 
 The six items surfaced during the PoC build (2026-09-24) were all resolved the same day and folded into §2/§3 — see §6.
 
-**Raised 2026-09-24 (post-PoC iteration), awaiting Erwin's decisions — not built yet** (the portal slice raised alongside it was resolved; see §3 Portal and §6):
-
-1. **Concurrent stages.** A single `engagements.stage` pointer (and the linear stepper) implies strict sequence, which doesn't match migration work, where modeling and dashboarding run in tandem (the same reasoning that removed gates). Erwin leans towards deriving "where the engagement is" from deliverables rather than setting it by hand, and asked whether this should be one flexible mechanism for every type instead of a per-type switch. *Current proposal:* one mechanism, no sequential/concurrent flag. Every engagement has a *set* of active stages, and a linear type is simply one whose work happens to run one stage at a time. Where a type has a deliverable kind that represents stages (migration `phase`), each deliverable of that kind carries the stage it stands for, and the stage's state (not started / active / done) is derived from those deliverables' statuses, so there's nothing to move by hand. A type without such a kind (QuickStart's flat curriculum) keeps a hand-set stage. The type declares which kind tracks stages, the same "types register, they don't fork code" rule as `parent_kind` and `client_visible`.
+Items raised during the post-PoC iterations (concurrent stages, the portal slice) were resolved and folded into §3 — see §6. **None open.**
 
 ---
 
@@ -707,3 +718,7 @@ Dated entries for traceability — why something is the way it is, in case it's 
   - A per-deliverable **chat pop-up** shows its activity log and takes quick comments. Commenting was opened to `viewer` memberships, since commenting is low-stakes; editing still needs owner/collaborator.
   - The dependency display was toned down. Erwin found "waiting" too loud when the dependent work hadn't even started (a milestone after a previous milestone is just planned order). `dep_state` itself is unchanged; the display rule in §3 now makes unstarted sequencing quiet, and it no longer counts as needing attention.
 - **Client portal slice built (2026-09-24)**: Erwin approved the three portal proposals and added verdicts to this round. The workflow he set: each client user sees only deliverables of client-visible kinds, and only those they have access to, either as the project lead (`full` scope) or by owning the item (`assigned_only`, plus the parent for context). They can view and comment at any time, but can only give a verdict once the item is actually in UAT (`external_validation`). Implemented in the structurally separate way proposed: own `/portal` routes, a separate client thread next to internal notes, and a demo login until magic-link email exists. §3 Portal now carries the detail.
+- **Stages derived and concurrent; dashboards tracked by count; client access moved to the engagement (2026-09-25)**, at Erwin's direction:
+  - **Stages.** Erwin asked whether stage concurrency should be one flexible mechanism rather than a per-type switch, and preferred deriving stages from the work over setting them by hand. Built as one mechanism: every engagement has a set of active stages. A type that declares a `stage_kind` (migration → phase) derives them from those deliverables (`stage_key`), so modeling and dashboarding can both be active. A type without one (quickstart) keeps a hand-set stage. This removes the old duplication where migration phases mirrored a separately-set stage pointer.
+  - **Dashboards tracked by count.** Erwin's concern was that listing every tile of a large dashboard is too much of a lift, and the system would go unused. Parents of `bulk_child_counts` kinds now track unlisted children as per-status counts, with only troublesome tiles listed individually; both fold into the same rollup (his example: a 99-tile dashboard with 2 listed tiles and 97 counted).
+  - **Client access.** Provisioning it from the Team/allocation area would bottleneck on ops, whose job is higher-level (engagement health, team allocation, relations). Client access now lives in its own panel on the engagement page and is limited to admin, ops, or the engagement's owner, not collaborators or contractors.

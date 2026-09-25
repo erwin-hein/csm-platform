@@ -153,8 +153,16 @@ class EngagementType(Base):
     display_name: Mapped[str | None] = mapped_column(Text)
     storage_mode: Mapped[str] = mapped_column(Text, nullable=False)
     stage_vocab: Mapped[list[dict]] = mapped_column(JSONB, nullable=False)
+    # The deliverable kind that stands for this type's stages (migration → phase). When set,
+    # stage state is derived from those deliverables and several stages can be active at
+    # once; when NULL (quickstart), the engagement's stage is set by hand.
+    stage_kind: Mapped[str | None] = mapped_column(Text)
 
     kinds: Mapped[list["DeliverableKind"]] = relationship(order_by="DeliverableKind.kind")
+
+    @property
+    def stages_derived(self) -> bool:
+        return self.stage_kind is not None
 
     @property
     def stage_keys(self) -> list[str]:
@@ -182,7 +190,8 @@ class Engagement(Base):
     client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id"))
     type_key: Mapped[str] = mapped_column(Text, ForeignKey("engagement_types.key"))
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    stage: Mapped[str] = mapped_column(Text, nullable=False)
+    # Hand-set stage, only for types whose stages aren't derived (stage_kind IS NULL); NULL otherwise.
+    stage: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, server_default="active", default="active")
     # The next five columns are part of the §3 table but belong to features outside the
     # PoC (Slack, Harvest, health). They exist in the schema; nothing reads or writes them.
@@ -210,13 +219,18 @@ class Engagement(Base):
         return next((m.user for m in self.memberships if m.role == "owner"), None)
 
     @property
-    def stage_label(self) -> str:
-        return self.type.stage_label(self.stage)
+    def stage_states(self) -> list:
+        """Per-stage state (done / active / upcoming / empty), for either kind of type."""
+        from sqlalchemy.orm import object_session
+
+        from app.services.stages import derive_stage_states
+        return derive_stage_states(object_session(self), self)
 
     @property
-    def stage_index(self) -> int:
-        keys = self.type.stage_keys
-        return keys.index(self.stage) if self.stage in keys else -1
+    def stage_label(self) -> str:
+        """The active stage(s), e.g. 'Semantic-layer Parity + Dashboard Build'."""
+        from app.services.stages import derive_stage_label
+        return derive_stage_label(self.stage_states)
 
 
 # ---------------------------------------------------------------- deliverables
@@ -241,6 +255,9 @@ class DeliverableKind(Base):
     # Whether client_external users can ever see deliverables of this kind. A type with no
     # client-visible kinds has no client view at all.
     client_visible: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
+    # Parents of this kind (e.g. dashboard) may track most of their children as per-status
+    # counts instead of listing every one (deliverables.child_counts).
+    bulk_child_counts: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
 
 
 class Deliverable(Base):
@@ -278,6 +295,10 @@ class Deliverable(Base):
     priority: Mapped[str | None] = mapped_column(Text)
     target_date: Mapped[date | None] = mapped_column(Date)
     hours_estimated: Mapped[Decimal | None] = mapped_column(Numeric)
+    # For stage-kind deliverables (e.g. migration phases): the stage this one stands for.
+    stage_key: Mapped[str | None] = mapped_column(Text)
+    # For bulk-count parents: {pipeline_status: n} for children that aren't listed individually.
+    child_counts: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = _created_at()
 
     engagement: Mapped[Engagement] = relationship(

@@ -38,6 +38,7 @@ from app.services import clients as client_service
 from app.services import deliverables as deliverable_service
 from app.services import engagements as engagement_service
 from app.services import memberships as membership_service
+from app.services import stages as stage_service
 from app.services import users as user_service
 from app.web.auth import current_user
 from app.web.templating import is_htmx, render
@@ -117,7 +118,10 @@ def board(type_key: str, request: Request, show_closed: bool = False, db: Sessio
                                                               include_closed=show_closed)
     columns = {s["key"]: [] for s in etype.stage_vocab}
     for e in engagements:
-        columns.setdefault(e.stage, []).append(_engagement_summary(db, e))
+        summary = _engagement_summary(db, e)
+        # A card appears in every active stage's column (stages can run concurrently).
+        for key in stage_service.derive_board_keys(e.stage_states):
+            columns.setdefault(key, []).append(summary)
     return render(request, "board.html", nav=f"board:{type_key}", etype=etype, columns=columns,
                   types=engagement_service.list_engagement_types(db), show_closed=show_closed,
                   kinds=deliverable_service.kinds_for_type(db, type_key))
@@ -211,13 +215,24 @@ def _team_context(db: Session, user: User, engagement: Engagement) -> dict:
         "candidates": [u for u in user_service.list_internal_users(db) if u.id not in member_ids],
         "roles": MEMBERSHIP_ROLES,
         "can_manage": user.bypasses_membership,
-        # Client access (portal): same gate as other engagement-scoped actions.
-        "has_client_view": bool(client_visible_kinds(db, engagement.type_key)),
+    }
+
+
+def _client_access_context(db: Session, user: User, engagement: Engagement) -> dict | None:
+    if not client_visible_kinds(db, engagement.type_key):
+        return None
+    return {
+        "engagement": engagement,
         "client_members": client_portal.list_client_members(db, engagement.id),
         "invitable": client_portal.list_invitable_contacts(db, engagement),
-        "can_manage_clients": can_edit_engagement(db, user, engagement.id),
+        "can_manage": client_portal.can_manage_client_access(db, user, engagement.id),
         "scopes": VIEWER_SCOPES,
     }
+
+
+def _client_access_response(request: Request, db: Session, user: User, engagement_id: uuid.UUID):
+    engagement = get_visible_engagement(db, user, engagement_id)
+    return render(request, "partials/client_access_panel.html", ca=_client_access_context(db, user, engagement))
 
 
 @router.get("/engagements/{engagement_id}")
@@ -228,7 +243,8 @@ def engagement_detail(engagement_id: uuid.UUID, request: Request, db: Session = 
     view = "client" if request.query_params.get("view") == "client" and ctx["has_client_view"] else "internal"
     client_sections = client_portal.derive_client_view(db, engagement) if view == "client" else []
     return render(request, "engagement_detail.html", nav=f"board:{engagement.type_key}", view=view,
-                  client_sections=client_sections, **ctx, team=_team_context(db, user, engagement))
+                  client_sections=client_sections, **ctx, team=_team_context(db, user, engagement),
+                  ca=_client_access_context(db, user, engagement))
 
 
 @router.post("/engagements/{engagement_id}/stage")
@@ -351,7 +367,7 @@ def client_invite(engagement_id: uuid.UUID, request: Request, contact_id: str = 
     client_portal.invite_client_contact(db, user, engagement_id, contact_id=cid, viewer_scope=viewer_scope)
     db.commit()
     if is_htmx(request):
-        return _team_response(request, db, user, engagement_id, False)
+        return _client_access_response(request, db, user, engagement_id)
     return _back(f"/engagements/{engagement_id}")
 
 
@@ -361,7 +377,7 @@ def client_scope(engagement_id: uuid.UUID, client_user_id: uuid.UUID, request: R
     client_portal.set_client_scope(db, user, engagement_id, user_id=client_user_id, viewer_scope=viewer_scope)
     db.commit()
     if is_htmx(request):
-        return _team_response(request, db, user, engagement_id, False)
+        return _client_access_response(request, db, user, engagement_id)
     return _back(f"/engagements/{engagement_id}")
 
 
@@ -371,7 +387,7 @@ def client_revoke(engagement_id: uuid.UUID, client_user_id: uuid.UUID, request: 
     client_portal.revoke_client_access(db, user, engagement_id, user_id=client_user_id)
     db.commit()
     if is_htmx(request):
-        return _team_response(request, db, user, engagement_id, False)
+        return _client_access_response(request, db, user, engagement_id)
     return _back(f"/engagements/{engagement_id}")
 
 
@@ -400,7 +416,8 @@ async def deliverable_create(engagement_id: uuid.UUID, request: Request, db: Ses
         db, user, engagement_id, kind=form.get("kind", ""), name=form.get("name", ""),
         parent_id=_uuid(form.get("parent_id")), internal_assignee_user_id=_uuid(form.get("assignee_id")),
         priority=form.get("priority") or None, target_date=form.get("target_date") or None,
-        hours_estimated=form.get("hours_estimated") or None,
+        hours_estimated=form.get("hours_estimated") or None, stage_key=form.get("stage_key") or None,
+        child_count=form.get("child_count") or None,
     )
     for blocker_id in form.getlist("blocker_ids"):
         deliverable_service.add_blocker(db, user, deliverable.id, blocker_id=_uuid(blocker_id))
@@ -518,12 +535,28 @@ async def deliverable_edit(deliverable_id: uuid.UUID, request: Request, db: Sess
                            user: User = Depends(current_user)):
     form = await request.form()
     extra = {"client_owner_user_id": _uuid(form.get("client_owner_id"))} if "client_owner_id" in form else {}
+    if "stage_key" in form:
+        extra["stage_key"] = form.get("stage_key") or None
     deliverable_service.update_deliverable(
         db, user, deliverable_id, name=form.get("name", ""),
         internal_assignee_user_id=_uuid(form.get("assignee_id")), priority=form.get("priority") or None,
         target_date=form.get("target_date") or None, hours_estimated=form.get("hours_estimated") or None, **extra,
     )
     db.commit()
+    return _back(f"/deliverables/{deliverable_id}")
+
+
+@router.post("/deliverables/{deliverable_id}/counts")
+async def deliverable_counts(deliverable_id: uuid.UUID, request: Request, db: Session = Depends(get_db),
+                             user: User = Depends(current_user)):
+    """Per-status counts for the children not listed individually (e.g. a dashboard's other tiles)."""
+    form = await request.form()
+    d = deliverable_service.set_child_counts(db, user, deliverable_id,
+                                             counts={s: form.get(f"count_{s}") or 0 for s in PIPELINE_STATUSES})
+    db.commit()
+    if is_htmx(request) and form.get("panel"):
+        engagement = get_visible_engagement(db, user, d.engagement_id)
+        return render(request, "partials/deliverables_panel.html", **_engagement_context(db, user, engagement))
     return _back(f"/deliverables/{deliverable_id}")
 
 

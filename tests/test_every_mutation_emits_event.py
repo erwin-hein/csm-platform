@@ -61,16 +61,19 @@ def test_each_mutation_writes_its_event_row(db, world):
     c = run(clients.create_client, a, name="Initech")
     run(clients.add_alias, a, c.id, alias="ITC", alias_type="acronym")
     run(clients.add_contact, a, c.id, name="Bill")
+    qs = engagements.create_engagement(db, a, client_id=c.id, type_key="quickstart", name="Initech QS")
+    run(engagements.change_stage, a, qs.id, stage="dev_training")
     e = run(engagements.create_engagement, a, client_id=c.id, type_key="migration", name="Initech Migration")
-    run(engagements.change_stage, a, e.id, stage="access_setup")
     run(engagements.change_status, a, e.id, status="paused")
     run(memberships.assign_member, a, e.id, user_id=world.alice.id, role="owner")
     run(memberships.remove_member, a, e.id, user_id=world.alice.id)
-    p1 = run(deliverables.create_deliverable, a, e.id, kind="phase", name="P1")
-    p2 = run(deliverables.create_deliverable, a, e.id, kind="phase", name="P2")
+    p1 = run(deliverables.create_deliverable, a, e.id, kind="phase", name="P1", stage_key="scoping")
+    p2 = run(deliverables.create_deliverable, a, e.id, kind="phase", name="P2", stage_key="scoping")
     run(deliverables.update_deliverable, a, p1.id, pipeline_status="in_progress")
     run(deliverables.add_note, a, p1.id, body="note")
     run(deliverables.add_blocker, a, p2.id, blocker_id=p1.id)
+    counted = deliverables.create_deliverable(db, a, e.id, kind="dashboard", name="Counted", child_count=10)
+    run(deliverables.set_child_counts, a, counted.id, counts={"done": 4, "not_started": 6})
     run(deliverables.remove_blocker, a, p2.id, blocker_id=p1.id)
 
     contact = clients.add_contact(db, a, c.id, name="Carla Client", email="carla@initech.com")
@@ -86,18 +89,18 @@ def test_each_mutation_writes_its_event_row(db, world):
 
 
 def test_event_carries_actor_and_entity(db, world):
-    e = engagements.change_stage(db, world.admin, world.alice_eng.id, stage="access_setup")
+    e = engagements.change_stage(db, world.admin, world.bob_eng.id, stage="dev_training")
     ev = db.scalar(select(Event).where(Event.event_type == "stage_changed").order_by(Event.id.desc()))
     assert ev.entity_type == "engagement" and ev.entity_id == e.id
     assert ev.actor_user_id == world.admin.id
-    assert ev.payload == {"from": "scoping", "to": "access_setup"}
+    assert ev.payload == {"from": "kickoff", "to": "dev_training"}
 
 
 def test_emit_is_in_same_transaction_as_the_write(db, world):
     """A failed request rolls back both the mutation and its event."""
     sp = db.begin_nested()
-    engagements.change_stage(db, world.admin, world.alice_eng.id, stage="access_setup")
+    engagements.change_stage(db, world.admin, world.bob_eng.id, stage="dev_training")
     sp.rollback()
     assert db.scalar(select(Event).where(Event.event_type == "stage_changed")) is None
-    db.refresh(world.alice_eng)
-    assert world.alice_eng.stage == "scoping"
+    db.refresh(world.bob_eng)
+    assert world.bob_eng.stage == "kickoff"

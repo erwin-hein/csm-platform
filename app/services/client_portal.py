@@ -14,7 +14,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.access import (
-    can_edit_engagement,
     client_can_review,
     client_can_see,
     client_membership,
@@ -24,6 +23,7 @@ from app.access import (
     get_visible_deliverable,
     get_visible_engagement,
     is_internal,
+    membership_role,
 )
 from app.errors import Forbidden, NotFound, ValidationError
 from app.events import emit, mutation
@@ -126,6 +126,11 @@ class ClientItem:
     owned: bool
     children: list["ClientItem"] = field(default_factory=list)
 
+    @property
+    def counted(self) -> dict:
+        """Children tracked by count (bulk_child_counts parents), e.g. a dashboard's unlisted tiles."""
+        return {k: v for k, v in (self.deliverable.child_counts or {}).items() if v}
+
 
 @dataclass
 class ClientSection:
@@ -170,7 +175,15 @@ def derive_client_view(db: Session, engagement: Engagement, *, viewer: User | No
         roots = [n for n in nodes.values() if n.deliverable.kind == kind.kind
                  and n.deliverable.parent_id not in nodes]
         flat = [x for r in roots for x in ([r] + r.children)]
-        sections.append(ClientSection(kind, roots, sum(x.deliverable.pipeline_status == "done" for x in flat), len(flat)))
+        done = sum(x.deliverable.pipeline_status == "done" for x in flat)
+        total = len(flat)
+        # Counted children only roll up for viewers who can see the whole parent (leads and
+        # internal preview); a scoped user sees their own listed items, not the counts.
+        if viewer is None or (membership and membership.viewer_scope == "full"):
+            for r in roots:
+                done += r.counted.get("done", 0)
+                total += sum(r.counted.values())
+        sections.append(ClientSection(kind, roots, done, total))
     return [s for s in sections if s.items]
 
 
@@ -223,11 +236,18 @@ def submit_review(db: Session, actor: User, deliverable_id: uuid.UUID, *, verdic
     return row
 
 
+def can_manage_client_access(db: Session, actor: User, engagement_id: uuid.UUID) -> bool:
+    """Client access is provisioned per engagement by admin, ops, or the engagement's owner.
+    Collaborators, viewers and contractors can't grant it (CLAUDE.md §3 Portal)."""
+    if actor.bypasses_membership:
+        return True
+    return actor.role != "contractor" and membership_role(db, actor, engagement_id) == "owner"
+
+
 def _require_can_invite(db: Session, actor: User, engagement_id: uuid.UUID) -> Engagement:
-    # Same gate as other engagement-scoped actions: owner/collaborator, or ops/admin.
     engagement = get_visible_engagement(db, actor, engagement_id)
-    if not can_edit_engagement(db, actor, engagement.id):
-        raise Forbidden("Only the engagement's owner/collaborators or ops/admin can manage client access")
+    if not can_manage_client_access(db, actor, engagement.id):
+        raise Forbidden("Only admin, ops or the engagement's owner can manage client access")
     return engagement
 
 

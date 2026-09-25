@@ -118,14 +118,16 @@ form.inline { display: inline; margin: 0; }
 /* ---- stage stepper */
 .stepper { display: flex; gap: 3px; margin: 12px 0 4px; }
 .stepper .step { flex: 1; min-width: 0; padding: 7px 8px 6px; font-size: 11.5px; text-align: center; background: var(--surface-2); color: var(--muted); border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid transparent; }
-.stepper .step.past { background: #dfe6f4; color: #3b4a66; }
-.stepper .step.current { color: #fff; font-weight: 600; }
-.stepper.quickstart .step.current { background: var(--qs); }
-.stepper.migration .step.current { background: var(--mig); }
+.stepper .step.st-done { background: #dfe6f4; color: #3b4a66; }
+.stepper .step.st-active { color: #fff; font-weight: 600; }
+.stepper .step.st-empty { background: repeating-linear-gradient(135deg, var(--surface-2), var(--surface-2) 6px, #fff 6px, #fff 12px); }
+.step-state { display: block; font-size: 10px; font-weight: 500; opacity: .75; margin-top: 1px; }
+.stepper.quickstart .step.st-active { background: var(--qs); }
+.stepper.migration .step.st-active { background: var(--mig); }
 .stepper.mini { margin: 8px 0 0; gap: 2px; }
 .stepper.mini .step { padding: 0; height: 5px; font-size: 0; }
 button.step { cursor: pointer; font: inherit; font-size: 11.5px; }
-button.step:hover:not(.current) { border-color: var(--accent); }
+button.step:hover:not(.st-active) { border-color: var(--accent); }
 
 /* ---- portfolio */
 .client-block { margin-bottom: 20px; }
@@ -318,3 +320,14 @@ button.step:hover:not(.current) { border-color: var(--accent); }
 .chat-count.client::before { content: "·"; margin-right: 3px; color: var(--muted); }
 .client-preview-note { margin-bottom: 12px; background: #fffaf0; border-color: #f1d9a8; }
 .client-card { border-color: #f1d9a8; background: #fffdf8; }
+
+/* ---- bulk child counts, stage links */
+.counts { margin: 8px 0 2px; padding: 8px 10px; background: var(--surface-2); border-radius: 6px; font-size: 12.5px; }
+.counts-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.counts-form { display: none; margin-top: 8px; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.counts.editing .counts-form { display: flex; }
+.counts-form label { display: flex; flex-direction: column; gap: 3px; }
+.counts-form input { width: 86px; }
+.counts-form .help { flex-basis: 100%; }
+.stage-link { font-size: 11px; color: var(--mig); background: var(--mig-soft); padding: 1px 7px; border-radius: 4px; }
+.p-counts { font-size: 12px; color: var(--muted); padding: 0 16px 8px; margin-top: -4px; }

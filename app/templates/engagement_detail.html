@@ -24,6 +24,7 @@
     <div class="stack">
       {% set compact = False %}
       {% include "partials/team_panel.html" %}
+      {% if ca %}{% include "partials/client_access_panel.html" %}{% endif %}
       <div class="card small">
         <h3>About this type</h3>
         <dl class="kv">

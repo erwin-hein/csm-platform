@@ -37,36 +37,4 @@
     <button class="btn small primary" type="submit">Assign</button>
   </form>
   {% endif %}
-  {% if not compact and team.has_client_view %}
-  <div class="client-access">
-    <h3 style="margin:16px 0 4px">Client access <span class="client-tag">Portal</span></h3>
-    <p class="small muted" style="margin:0 0 6px">Client users see only client-visible deliverables. <b>Full</b> = project lead; <b>assigned only</b> = just the items they own.</p>
-    <ul class="team-list">
-      {% for m in team.client_members %}
-      <li>
-        <div><b>{{ m.user.label }}</b><div class="small muted">{{ m.user.email }}</div></div>
-        <div class="row" style="gap:6px">
-          {% if team.can_manage_clients %}
-          <form class="inline" hx-post="/engagements/{{ e.id }}/client-access/{{ m.user_id }}/scope" hx-target="#team-{{ e.id }}" hx-swap="outerHTML">
-            <select name="viewer_scope" onchange="this.form.requestSubmit()">{% for sc in team.scopes %}<option value="{{ sc }}" {{ 'selected' if sc == m.viewer_scope }}>{{ 'full' if sc == 'full' else 'assigned only' }}</option>{% endfor %}</select>
-          </form>
-          <form class="inline" hx-post="/engagements/{{ e.id }}/client-access/{{ m.user_id }}/remove" hx-target="#team-{{ e.id }}" hx-swap="outerHTML"
-                hx-confirm="Revoke {{ m.user.label }}'s portal access to {{ e.name }}?">
-            <button class="btn small danger" type="submit" title="Revoke">✕</button>
-          </form>
-          {% else %}<span class="role-chip">{{ 'full' if m.viewer_scope == 'full' else 'assigned only' }}</span>{% endif %}
-        </div>
-      </li>
-      {% else %}<li class="small muted">No client users yet.</li>{% endfor %}
-    </ul>
-    {% if team.can_manage_clients and team.invitable %}
-    <form class="row" style="margin-top:8px; gap:6px" hx-post="/engagements/{{ e.id }}/client-access" hx-target="#team-{{ e.id }}" hx-swap="outerHTML">
-      <select name="contact_id" required><option value="">+ Invite a client contact…</option>
-        {% for c in team.invitable %}<option value="{{ c.id }}">{{ c.name }} ({{ c.email }})</option>{% endfor %}</select>
-      <select name="viewer_scope"><option value="full">full</option><option value="assigned_only">assigned only</option></select>
-      <button class="btn small" type="submit">Invite</button>
-    </form>
-    {% endif %}
-  </div>
-  {% endif %}
 </div>

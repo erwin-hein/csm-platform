@@ -76,11 +76,14 @@ def seed_quickstart(db: Session, admin: User, eng_id, progress: dict[int, str], 
 def seed_migration(db: Session, admin: User, eng_id, spec: dict, *, assignee=None) -> dict[str, Deliverable]:
     """spec = {"phases": [(name, status, [(milestone, status), ...])], "dashboards": [(name, status, [(tile, status)])]}"""
     by_name: dict[str, Deliverable] = {}
+    # Phases stand for the migration's stages (linked by matching label); stages are derived from them.
+    stage_by_label = {s["label"]: s["key"] for s in E.get_engagement_type(db, "migration").stage_vocab}
     for parent_kind, child_kind, key in (("phase", "milestone", "phases"), ("dashboard", "tile", "dashboards")):
         for i, (name, status, children) in enumerate(spec.get(key, [])):
             parent = D.create_deliverable(db, admin, eng_id, kind=parent_kind, name=name,
                                           internal_assignee_user_id=assignee, target_date=_d(14 * i - 14),
-                                          priority="high" if i == 0 else "medium")
+                                          priority="high" if i == 0 else "medium",
+                                          stage_key=stage_by_label[name] if parent_kind == "phase" else None)
             if status != "not_started":
                 _set(db, admin, parent, pipeline_status=status)
             by_name[name] = parent
@@ -158,8 +161,6 @@ def seed(db: Session) -> None:
     # ---------------- Migration engagements
     bf = E.create_engagement(db, admin, client_id=bluefin.id, type_key="migration",
                              name="Bluefin Tableau → Omni Migration")
-    for stage in ("access_setup", "semantic_parity"):
-        E.change_stage(db, admin, bf.id, stage=stage)
     M.assign_member(db, admin, bf.id, user_id=tomas.id, role="owner")
     M.assign_member(db, admin, bf.id, user_id=priya.id, role="collaborator")
     bfx = seed_migration(db, admin, bf.id, {
@@ -171,7 +172,8 @@ def seed(db: Session) -> None:
                 ("Revenue-cycle measures", "in_progress"),
                 ("Parity sign-off vs. Tableau extracts", "not_started"),
             ]),
-            ("Dashboard Build", "not_started", [("Rebuild priority dashboards", "not_started")]),
+            ("Dashboard Build", "in_progress", [("Rebuild priority dashboards", "not_started"),
+                                                ("Executive Census rebuilt on the new model", "in_progress")]),
         ],
         "dashboards": [
             ("Executive Census", "in_progress", [
@@ -220,10 +222,26 @@ def seed(db: Session) -> None:
     P.add_client_comment(db, tomas, bfx["Executive Census"].id,
                          body="Yes, adding a unit filter across the dashboard this week.")
 
+    # Big dashboards are tracked mostly by count: only the troublesome tiles are listed.
+    D.set_child_counts(db, admin, bfx["Executive Census"].id,
+                       counts={"done": 6, "in_progress": 3, "not_started": 11})
+    clin = D.create_deliverable(db, admin, bf.id, kind="dashboard", name="Clinical Operations Workbook",
+                                internal_assignee_user_id=tomas.id, priority="medium", child_count=99,
+                                target_date=_d(35))
+    _set(db, admin, clin, pipeline_status="in_progress", client_owner_user_id=hannah.id)
+    readm = D.create_deliverable(db, admin, bf.id, kind="tile", name="Readmission rate by DRG", parent_id=clin.id,
+                                 internal_assignee_user_id=tomas.id, hours_estimated="6")
+    _set(db, admin, readm, blocked=True, client_owner_user_id=marcus.id,
+         blocked_reason="Tableau calc uses a DRG grouper version we don't have; asked client for the mapping")
+    los = D.create_deliverable(db, admin, bf.id, kind="tile", name="Length-of-stay variance", parent_id=clin.id,
+                               internal_assignee_user_id=tomas.id, hours_estimated="3")
+    _set(db, admin, los, pipeline_status="in_progress")
+    # 99 tiles in total: the 2 listed above, plus 97 tracked by count.
+    D.set_child_counts(db, admin, clin.id, counts={"done": 3, "in_progress": 2, "not_started": 92})
+    D.add_note(db, tomas, readm.id, body="Other 96 tiles are straightforward ports; only these two need real work.")
+
     cb_mig = E.create_engagement(db, admin, client_id=cobalt.id, type_key="migration",
                                  name="Cobalt Looker → Omni Migration")
-    for stage in ("access_setup", "semantic_parity", "dashboard_build"):
-        E.change_stage(db, admin, cb_mig.id, stage=stage)
     M.assign_member(db, admin, cb_mig.id, user_id=priya.id, role="owner")
     M.assign_member(db, admin, cb_mig.id, user_id=aisha.id, role="collaborator")
     cbx = seed_migration(db, admin, cb_mig.id, {

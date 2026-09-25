@@ -105,7 +105,7 @@ def portal(db, world):
     qa_c = clients.add_contact(db, a, world.client.id, name="Quinn QA", email="quinn@acme.com")
     lead = client_portal.invite_client_contact(db, a, eid, contact_id=lead_c.id, viewer_scope="full").user
     qa = client_portal.invite_client_contact(db, a, eid, contact_id=qa_c.id, viewer_scope="assigned_only").user
-    phase = deliverables.create_deliverable(db, a, eid, kind="phase", name="Internal phase")
+    phase = deliverables.create_deliverable(db, a, eid, kind="phase", name="Internal phase", stage_key="scoping")
     dash = deliverables.create_deliverable(db, a, eid, kind="dashboard", name="Sales dashboard")
     qa_tile = deliverables.create_deliverable(db, a, eid, kind="tile", name="QA tile", parent_id=dash.id)
     other_tile = deliverables.create_deliverable(db, a, eid, kind="tile", name="Lead-only tile", parent_id=dash.id)

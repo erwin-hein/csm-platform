@@ -32,7 +32,7 @@
       <div>{{ type_badge(e.type) }}</div>
       <div class="name"><a href="/engagements/{{ e.id }}">{{ e.name }}</a> {{ eng_status(e.status) }}
         <div>{{ kind_mix(s.kind_counts) }}</div></div>
-      <div><div class="small"><b>{{ e.stage_label }}</b> <span class="muted">· stage {{ e.stage_index + 1 }} of {{ e.type.stage_vocab | length }}</span></div>{{ stepper(e, mini=True) }}</div>
+      <div><div class="small"><b>{{ e.stage_label }}</b></div>{{ stepper(e, mini=True) }}</div>
       <div>{{ progress_bar(s.progress) }}<div style="margin-top:4px">{{ progress_text(s.progress) }}</div></div>
       <div class="small">{% if e.owner %}{{ e.owner.label }}{% else %}<span class="warn-tag">No owner</span>{% endif %}</div>
     </div>

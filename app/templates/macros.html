@@ -28,9 +28,8 @@
 
 {% macro stepper(engagement, mini=False) -%}
 <div class="stepper {{ engagement.type_key }}{{ ' mini' if mini }}">
-  {% set cur = engagement.stage_index %}
-  {% for s in engagement.type.stage_vocab %}
-    <div class="step {{ 'past' if loop.index0 < cur }} {{ 'current' if loop.index0 == cur }}" title="{{ s.label }}">{{ s.label }}</div>
+  {% for s in engagement.stage_states %}
+    <div class="step st-{{ s.state }}" title="{{ s.label }} · {{ s.state }}">{{ s.label }}</div>
   {% endfor %}
 </div>
 {%- endmacro %}

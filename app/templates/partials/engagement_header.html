@@ -12,10 +12,11 @@
     <div style="min-width: 220px">{{ progress_bar(tree.progress) }}<div style="margin-top:4px">{{ progress_text(tree.progress) }}</div></div>
   </div>
   <div class="stepper {{ engagement.type_key }}">
-    {% set cur = engagement.stage_index %}
-    {% for s in engagement.type.stage_vocab %}
-      {% set cls = ('past' if loop.index0 < cur else '') ~ (' current' if loop.index0 == cur else '') %}
-      {% if can_edit and loop.index0 != cur %}
+    {% for s in engagement.stage_states %}
+      {% set cls = 'st-' ~ s.state %}
+      {% if engagement.type.stages_derived %}
+      <div class="step {{ cls }}" title="{{ s.label }}: {{ s.state }}{% if s.items %} ({{ s.items | map(attribute='name') | join(', ') }}){% endif %}">{{ s.label }}<span class="step-state">{{ {'done':'Done','active':'Active','upcoming':'Planned','empty':'—'}[s.state] }}</span></div>
+      {% elif can_edit and s.state != 'active' %}
       <button class="step {{ cls }}" hx-post="/engagements/{{ engagement.id }}/stage" hx-vals='{"stage": "{{ s.key }}"}'
               hx-target="#eng-header" hx-swap="outerHTML" hx-confirm="Move to “{{ s.label }}”?"
               title="Move to {{ s.label }}">{{ s.label }}</button>
@@ -25,7 +26,7 @@
     {% endfor %}
   </div>
   <div class="spread small muted">
-    <span>{% if can_edit %}Click a stage to move the engagement.{% endif %}</span>
+    <span>{% if engagement.type.stages_derived %}Stages follow the {{ engagement.type.stage_kind }}s below and can run at the same time: a stage is active while any of its {{ engagement.type.stage_kind }}s is under way.{% elif can_edit %}Click a stage to move the engagement.{% endif %}</span>
     {% if can_edit %}
     <form class="row" hx-post="/engagements/{{ engagement.id }}/status" hx-target="#eng-header" hx-swap="outerHTML">
       <label>Status

@@ -10,7 +10,25 @@
 {% else %}{{ status_pill(d.pipeline_status) }}{% endif %}
 {%- endmacro %}
 
-{% macro item(node, child_kind) -%}
+{% macro counts_block(node, child_kind) -%}
+{% set d = node.deliverable %}{% set counts = d.child_counts or {} %}
+{% set counted = counts.values() | sum %}{% set listed = node.children | length %}
+<div class="counts">
+  <div class="counts-line"><b>{{ listed + counted }} {{ child_kind.display_name | lower }}s</b>
+    <span class="muted">· {{ listed }} listed below · {{ counted }} tracked by count{% if counted %}:
+      {% for s in pipeline_statuses if counts.get(s) %}{{ counts[s] }} {{ PIPELINE_LABELS[s] | lower }}{{ ', ' if not loop.last }}{% endfor %}{% endif %}</span>
+    {% if can_edit %}<button type="button" class="btn link small" onclick="this.closest('.counts').classList.toggle('editing')">Edit counts</button>{% endif %}</div>
+  {% if can_edit %}
+  <form class="counts-form" hx-post="/deliverables/{{ d.id }}/counts" hx-vals='{"panel": "1"}' hx-target="#deliverables" hx-swap="outerHTML">
+    {% for s in pipeline_statuses %}<label><span class="pill s-{{ s }} nodot">{{ PIPELINE_LABELS[s] }}</span><input type="number" min="0" step="1" name="count_{{ s }}" value="{{ counts.get(s, 0) }}"></label>{% endfor %}
+    <button class="btn small primary" type="submit">Save counts</button>
+    <div class="help">For {{ child_kind.display_name | lower }}s you haven't listed individually. Listed ones keep their own status; progress adds both together. Listing a new {{ child_kind.display_name | lower }} takes one out of "not started" here.</div>
+  </form>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+{% macro item(node, child_kind, bulk=False) -%}
 {% set d = node.deliverable %}
 {% set finished = d.pipeline_status == 'done' or d.not_applicable %}
 <div class="dv {{ 'collapsed' if finished }} {{ 'dv-parent' if child_kind else 'dv-leaf' }} {{ 'na' if d.not_applicable }}" data-dv="{{ d.id }}">
@@ -19,6 +37,7 @@
     <div class="dv-title">
       <a class="dv-name" href="/deliverables/{{ d.id }}">{{ d.name }}</a>
       {% if d.not_applicable %}<span class="status-badge">n/a</span>{% endif %}
+      {% if d.stage_key and d.stage_key and engagement.type.stage_label(d.stage_key) != d.name %}<span class="stage-link" title="Stands for this stage">Stage: {{ engagement.type.stage_label(d.stage_key) }}</span>{% endif %}
       {{ dep_signal(node.signal) }}
       {% if node.verdict %}{{ verdict_chip(node.verdict, 'Client: ') }}{% endif %}
     </div>
@@ -39,6 +58,7 @@
       {% if d.blocked %}<span class="dv-reason">Blocked: {{ d.blocked_reason }}</span>{% endif %}
       {% if d.client_owner %}<span>Client owner: {{ d.client_owner.label }}</span>{% endif %}
     </div>
+    {% if bulk %}{{ counts_block(node, child_kind) }}{% endif %}
     {% if child_kind %}
     <div class="dv-children">
       {% for child in node.children %}{{ item(child, None) }}{% endfor %}
@@ -67,7 +87,7 @@
     </div>
   </div>
   <div class="dv-list">
-    {% for node in section.nodes %}{{ item(node, section.child_kind) }}{% else %}<div class="empty">No {{ section.kind.display_name | lower }}s yet.</div>{% endfor %}
+    {% for node in section.nodes %}{{ item(node, section.child_kind, section.kind.bulk_child_counts) }}{% else %}<div class="empty">No {{ section.kind.display_name | lower }}s yet.</div>{% endfor %}
     {% if can_edit %}
     <a class="round-add" href="/engagements/{{ engagement.id }}/deliverables/new?kind={{ section.kind.kind }}">
       <span class="round-add-btn">+</span><span>Add {{ section.kind.display_name | lower }}</span></a>

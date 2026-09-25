@@ -17,6 +17,9 @@
   </div>
 </div>
 {% if d.blocked and d.blocked_reason %}<div class="p-reason {{ 'p-child' if child }}">{{ d.blocked_reason }}</div>{% endif %}
+{% if i.counted and (membership is not defined or membership.viewer_scope == 'full') %}{% set listed = i.children | length %}
+<div class="p-counts">{{ listed + (i.counted.values() | sum) }} items in total{% if listed %} ({{ listed }} listed below){% endif %} ·
+  {% for s, n in i.counted.items() %}{{ n }} {{ status_labels[s] | lower }}{{ ', ' if not loop.last }}{% endfor %} among the rest</div>{% endif %}
 {%- endmacro %}
 {% for s in sections %}
 <div class="card flush" style="margin-bottom:16px">
