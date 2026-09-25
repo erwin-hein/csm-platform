@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% from "macros.html" import type_badge, eng_status %}
+{% block title %}{{ o.name }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/pipeline">Pipeline</a> › <a href="/clients/{{ o.client.id }}">{{ o.client.name }}</a> ›</div>
+<div class="card">
+  <div class="spread">
+    <div>
+      <h1>{{ o.name }}</h1>
+      <div class="row small muted">
+        <span class="opp-stage st-{{ o.stage_key }}">{{ o.stage.label }}</span>
+        <span>Owner: {{ o.owner.label if o.owner else '—' }}</span>
+        <span>{{ 'Closed' if o.is_closed else 'Expected close' }} <b class="{{ 'overdue' if o.is_overdue }}">{{ o.close_date.strftime('%b %d, %Y') }}</b>{% if o.is_overdue %} (past due){% endif %}</span>
+        {% if o.lost_reason %}<span>Lost: {{ o.lost_reason }}</span>{% endif %}
+      </div>
+    </div>
+    <div class="opp-money">
+      <div><span>Amount</span><b>{{ o.amount | usd }}</b></div>
+      <div><span>Probability</span><b>{{ o.effective_probability }}%</b>{% if o.probability is not none and not o.is_closed %}<small>override</small>{% endif %}</div>
+      <div><span>Weighted</span><b>{{ o.weighted_amount | usd }}</b></div>
+      <div><span>Forecast</span><b>{{ FORECAST_CATEGORIES[o.effective_forecast_category] }}</b>{% if o.forecast_category and not o.is_closed %}<small>override</small>{% endif %}</div>
+    </div>
+  </div>
+  <div class="opp-path">
+    {% for s in stages %}
+      {% set cls = 'on' if s.key == o.stage_key else ('past' if s.sort_order < o.stage.sort_order and not s.is_closed else '') %}
+      {% if can_edit and s.key != o.stage_key %}
+      <form class="inline" method="post" action="/opportunities/{{ o.id }}/stage" {% if s.key != 'closed_lost' %}hx-confirm="Move to {{ s.label }}?"{% endif %}>
+        <input type="hidden" name="lost_reason" value="">
+        <input type="hidden" name="stage_key" value="{{ s.key }}">
+        <button class="opp-step {{ cls }} st-{{ s.key }}" type="submit" {% if s.key == 'closed_lost' %}onclick="return oppLostReason(this.form)"{% endif %}>{{ s.label }}</button>
+      </form>
+      {% else %}<span class="opp-step {{ cls }} st-{{ s.key }}">{{ s.label }}</span>{% endif %}
+    {% endfor %}
+  </div>
+  {% if can_edit %}<p class="small muted" style="margin:6px 0 0">Click a stage to move the opportunity. Closing it sets the close date to today.</p>{% endif %}
+</div>
+
+<div class="grid two" style="margin-top:16px">
+  <div class="stack">
+    <div class="card flush" id="products">
+      <div class="section-head"><h2 style="margin:0">Products</h2><span class="small muted">the amount is always the sum of these</span></div>
+      <table>
+        <tr><th>Product</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Total</th>{% if can_edit %}<th></th>{% endif %}</tr>
+        {% for li in o.line_items %}
+        <tr>
+          <td><b>{{ li.product.name }}</b><div class="small muted">{{ li.product.pricing_label }}{% if li.description %} · {{ li.description }}{% endif %}</div></td>
+          {% if can_edit %}
+          <td colspan="3">
+            <form class="row li-edit" method="post" action="/line-items/{{ li.id }}/edit">
+              <input type="number" name="quantity" value="{{ li.quantity | qty }}" min="0.01" step="any" title="Quantity ({{ li.product.unit }}s)">
+              <span class="muted">× $</span><input type="number" name="unit_price" value="{{ li.unit_price }}" min="0" step="any" title="Unit price">
+              <input type="hidden" name="description" value="{{ li.description or '' }}">
+              <b class="num" style="margin-left:auto">{{ li.total | usd }}</b>
+              <button class="btn small" type="submit">Save</button>
+            </form>
+          </td>
+          <td>{% if o.line_items | length > 1 %}
+            <form class="inline" method="post" action="/line-items/{{ li.id }}/remove" hx-confirm="Remove {{ li.product.name }}?">
+              <input type="hidden" name="opportunity_id" value="{{ o.id }}"><button class="btn small danger" type="submit" title="Remove">✕</button></form>
+          {% endif %}</td>
+          {% else %}
+          <td class="num">{{ li.quantity | qty }} {{ li.product.unit }}{{ 's' if li.quantity != 1 }}</td><td class="num">{{ li.unit_price | usd }}</td><td class="num"><b>{{ li.total | usd }}</b></td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        <tr><td colspan="3" class="num"><b>Amount</b></td><td class="num"><b>{{ o.amount | usd }}</b></td>{% if can_edit %}<td></td>{% endif %}</tr>
+      </table>
+      {% if can_edit %}
+      <form class="row" method="post" action="/opportunities/{{ o.id }}/line-items" style="padding:12px 16px; border-top:1px solid var(--border)">
+        <select name="product_id" required>
+          <option value="">+ Add a product…</option>
+          {% for p in products %}<option value="{{ p.id }}">{{ p.name }} · {{ p.pricing_label }}{% if p.default_unit_price %} · {{ p.default_unit_price | usd }}/{{ p.unit }}{% endif %}</option>{% endfor %}
+        </select>
+        <input type="number" name="quantity" value="1" min="0.01" step="any" style="width:80px" title="Quantity">
+        <input type="number" name="unit_price" min="0" step="any" placeholder="default price" style="width:130px">
+        <button class="btn small primary" type="submit">Add</button>
+      </form>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Delivery</h2>
+      {% for e in o.engagements %}
+        <div class="row" style="margin-bottom:6px">{{ type_badge(e.type) }}
+          {% if user.can('engagements') %}<a href="/engagements/{{ e.id }}"><b>{{ e.name }}</b></a>{% else %}<b>{{ e.name }}</b>{% endif %} {{ eng_status(e.status) }}
+          {% if user.bypasses_membership %}
+          <form class="inline" method="post" action="/opportunities/{{ o.id }}/link-engagement" hx-confirm="Unlink {{ e.name }} from this opportunity?">
+            <input type="hidden" name="engagement_id" value="{{ e.id }}"><input type="hidden" name="unlink" value="1">
+            <button class="btn small link" type="submit">unlink</button></form>
+          {% endif %}
+        </div>
+      {% else %}
+        {% if o.is_won %}<p><span class="warn-tag">No engagement yet</span> <span class="small muted">This deal is won but nothing is delivering it.</span></p>
+        {% else %}<p class="small muted">Once the opportunity is won, the engagement that delivers it is created or linked here.</p>{% endif %}
+      {% endfor %}
+      {% if o.is_won and user.bypasses_membership %}
+      <div class="row" style="margin-top:10px">
+        <a class="btn small primary" href="/engagements/new?opportunity_id={{ o.id }}">+ Create engagement from this</a>
+        {% if linkable %}
+        <form class="row" method="post" action="/opportunities/{{ o.id }}/link-engagement">
+          <select name="engagement_id" required><option value="">Link an existing engagement…</option>
+            {% for e in linkable %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}</select>
+          <button class="btn small" type="submit">Link</button>
+        </form>
+        {% endif %}
+      </div>
+      {% elif o.is_won and not o.engagements %}<p class="small muted">Ops (engagements:manage) creates or links the engagement.</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <h2>Details</h2>
+      {% if can_edit %}
+      <form method="post" action="/opportunities/{{ o.id }}/edit">
+        <label class="field"><span>Name</span><input type="text" name="name" value="{{ o.name }}" required></label>
+        <div class="grid cols">
+          <label class="field"><span>{{ 'Closed on' if o.is_closed else 'Expected close' }}</span><input type="date" name="close_date" value="{{ o.close_date.isoformat() }}" required></label>
+          {% if can_reassign %}
+          <label class="field"><span>Owner</span><select name="owner_user_id">{% for u in sales_users %}<option value="{{ u.id }}" {{ 'selected' if u.id == o.owner_user_id }}>{{ u.label }}</option>{% endfor %}</select></label>
+          {% endif %}
+        </div>
+        {% if not o.is_closed %}
+        <div class="grid cols">
+          <label class="field"><span>Probability %</span><input type="number" name="probability" min="0" max="100" value="{{ o.probability if o.probability is not none else '' }}" placeholder="stage default: {{ o.stage.default_probability }}"></label>
+          <label class="field"><span>Forecast category</span><select name="forecast_category">
+            <option value="">stage default ({{ FORECAST_CATEGORIES[o.stage.forecast_category] }})</option>
+            {% for c in categories %}<option value="{{ c }}" {{ 'selected' if c == o.forecast_category }}>{{ FORECAST_CATEGORIES[c] }}</option>{% endfor %}</select></label>
+        </div>
+        {% endif %}
+        <label class="field"><span>Next step</span><input type="text" name="next_step" value="{{ o.next_step or '' }}"></label>
+        <label class="field"><span>Source</span><input type="text" name="source" value="{{ o.source or '' }}"></label>
+        <button class="btn small primary" type="submit">Save</button>
+      </form>
+      {% else %}
+      <dl class="kv">
+        <dt>Next step</dt><dd>{{ o.next_step or '—' }}</dd>
+        <dt>Source</dt><dd>{{ o.source or '—' }}</dd>
+      </dl>
+      <p class="small muted">Only the owner or a sales lead can change this opportunity.</p>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h2>History</h2>
+      <ul class="activity">
+        {% for m in movement %}<li><div class="small muted">{{ m.at.strftime('%b %d, %H:%M') }} · {{ m.actor.label if m.actor else 'system' }}</div><div class="mv mv-{{ m.kind }}">{{ m.text }}</div></li>
+        {% else %}<li class="muted small">No changes yet.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

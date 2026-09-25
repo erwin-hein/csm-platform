@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Add opportunity{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/pipeline">Pipeline</a> ›</div>
+<h1>Add opportunity</h1>
+<p class="muted">A deal with a client or prospect. It needs at least one product; its amount is the sum of its products. Add more products after creating it.</p>
+<form class="card" method="post" action="/opportunities" style="max-width: 720px">
+  <label class="field"><span>Client</span>
+    <select name="client_id" required>
+      <option value="">— pick a client —</option>
+      {% for c in clients %}<option value="{{ c.id }}" {{ 'selected' if c.id|string == selected_client_id }}>{{ c.name }}</option>{% endfor %}
+    </select>
+    <div class="help">A new prospect? <a href="/clients/new">Add them as a client</a> first.</div></label>
+  <label class="field"><span>Name</span><input type="text" name="name" required placeholder="e.g. Atlas Freight QuickStart"></label>
+  <div class="grid cols">
+    <label class="field"><span>Stage</span><select name="stage_key">{% for s in stages %}<option value="{{ s.key }}">{{ s.label }} ({{ s.default_probability }}%)</option>{% endfor %}</select></label>
+    <label class="field"><span>Expected close</span><input type="date" name="close_date" required></label>
+    {% if user.can('opportunities', 'manage') %}
+    <label class="field"><span>Owner</span><select name="owner_user_id">{% for u in sales_users %}<option value="{{ u.id }}" {{ 'selected' if u.id == user.id }}>{{ u.label }}</option>{% endfor %}</select></label>
+    {% endif %}
+  </div>
+  <h3 style="margin-top:8px">First product</h3>
+  <div class="grid cols">
+    <label class="field"><span>Product</span>
+      <select name="product_id" required id="np-product" onchange="npPrice(this)">
+        <option value="">— pick a product —</option>
+        {% for p in products %}<option value="{{ p.id }}" data-price="{{ p.default_unit_price or '' }}" data-unit="{{ p.unit }}">{{ p.name }} · {{ p.pricing_label }}</option>{% endfor %}
+      </select></label>
+    <label class="field"><span>Quantity <span id="np-unit" class="muted"></span></span><input type="number" name="quantity" value="1" min="0.01" step="any"></label>
+    <label class="field"><span>Unit price (USD)</span><input type="number" name="unit_price" id="np-price" min="0" step="any" placeholder="product default"></label>
+  </div>
+  <div class="grid cols">
+    <label class="field"><span>Next step</span><input type="text" name="next_step"></label>
+    <label class="field"><span>Source</span><input type="text" name="source" placeholder="referral, inbound, Omni partner…"></label>
+  </div>
+  <button class="btn primary" type="submit">Create opportunity</button>
+</form>
+{% endblock %}

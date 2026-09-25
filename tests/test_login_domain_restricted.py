@@ -37,7 +37,7 @@ def test_first_google_login_bootstraps_admin_from_env(http, db, monkeypatch):
                                              "hd": "shearwaterdata.com", "name": "The Boss"})
     assert r.status_code == 303 and r.headers["location"] == "/"
     user = get_user_by_email(db, "boss@shearwaterdata.com")
-    assert user.role == "admin" and user.display_name == "The Boss"
+    assert user.is_admin and user.display_name == "The Boss"
     assert c.get("/team").status_code == 200
 
 
@@ -45,7 +45,8 @@ def test_first_google_login_defaults_to_analyst(http, db, monkeypatch):
     _, r = _google_login(http, monkeypatch, {"email": "newbie@shearwaterdata.com", "email_verified": True,
                                              "hd": "shearwaterdata.com"})
     assert r.status_code == 303
-    assert get_user_by_email(db, "newbie@shearwaterdata.com").role == "analyst"
+    newbie = get_user_by_email(db, "newbie@shearwaterdata.com")
+    assert not newbie.is_admin and [r.name for r in newbie.access_roles] == ["Delivery"]
 
 
 def test_outside_domain_google_login_creates_nothing(http, db, monkeypatch):

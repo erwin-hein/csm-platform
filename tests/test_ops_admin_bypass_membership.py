@@ -24,9 +24,12 @@ def test_admin_pages(http, world):
 
 
 def test_analyst_cannot_reach_admin_screens(http, world):
+    """Delivery has engagements:use only: modules it lacks don't exist for it (404), and
+    manage-level actions inside engagements are refused (403)."""
     alice = login(http, world.alice.email)
-    assert alice.get("/team").status_code == 403
-    assert alice.get("/events").status_code == 403
+    assert alice.get("/team").status_code == 404
+    assert alice.get("/events").status_code == 404
+    assert alice.get("/pipeline").status_code == 404
     assert alice.get("/clients/new").status_code == 403
     assert alice.post("/clients", data={"name": "Nope"}, follow_redirects=False).status_code == 403
     r = alice.post(f"/engagements/{world.alice_eng.id}/members", data={"user_id": str(world.bob.id), "role": "viewer"},

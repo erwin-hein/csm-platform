@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.errors import ValidationError
 from app.events import emit, mutation
-from app.models import User
+from app.models import AccessRole, User
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
@@ -30,19 +30,30 @@ def is_allowed_internal_email(email: str) -> bool:
 
 @mutation("user_created")
 def create_internal_user(db: Session, actor: User | None, *, email: str, display_name: str | None,
-                         role: str | None = None) -> User:
-    """Create an internal user. Without an explicit role, ADMIN_EMAILS decides
-    admin vs. the default 'analyst' (CLAUDE.md §2 row 16 bootstrap)."""
+                         is_admin: bool | None = None, roles: list[str] | None = None,
+                         is_contractor: bool = False) -> User:
+    """Create an internal user. ADMIN_EMAILS decides admin when is_admin isn't given
+    (CLAUDE.md §2 row 16 bootstrap). Without explicit roles (by name), the user gets the
+    default access roles (Delivery, out of the box)."""
     email = email.strip().lower()
     if not is_allowed_internal_email(email):
         raise ValidationError(f"Only @{settings.allowed_domain} accounts can be internal users")
-    if role is None:
-        role = "admin" if email in settings.admin_emails else "analyst"
-    user = User(email=email, display_name=display_name or email.split("@")[0], user_type="internal", role=role)
+    if is_admin is None:
+        is_admin = email in settings.admin_emails
+    if roles is None:
+        granted = list(db.scalars(select(AccessRole).where(AccessRole.is_default.is_(True))))
+    else:
+        granted = list(db.scalars(select(AccessRole).where(AccessRole.name.in_(roles))))
+        missing = set(roles) - {r.name for r in granted}
+        if missing:
+            raise ValidationError(f"Unknown access role(s): {', '.join(sorted(missing))}")
+    user = User(email=email, display_name=display_name or email.split("@")[0], user_type="internal",
+                is_admin=is_admin, is_contractor=is_contractor, access_roles=granted)
     db.add(user)
     db.flush()
     emit(db, entity_type="user", entity_id=user.id, event_type="user_created",
-         actor=actor or user, payload={"email": email, "role": role})
+         actor=actor or user, payload={"email": email, "is_admin": is_admin, "is_contractor": is_contractor,
+                                       "roles": [r.name for r in granted]})
     return user
 
 

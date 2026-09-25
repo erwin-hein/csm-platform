@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Add client{% endblock %}
 {% block content %}
-<div class="crumbs"><a href="/">Portfolio</a> ›</div>
+<div class="crumbs"><a href="/clients">Clients</a> ›</div>
 <h1>Add client</h1>
-<p class="muted">A client is the stable org identity — name, domains, contacts. The work itself lives on its engagements.</p>
+<p class="muted">A client is the stable org identity — name, domains, contacts. The work lives on its engagements, the deals on its opportunities. A prospect is just a client with no engagement yet.</p>
 <form class="card" method="post" action="/clients" style="max-width: 520px">
   <label class="field"><span>Name</span><input type="text" name="name" required autofocus placeholder="e.g. Northwind Logistics"></label>
   <label class="field"><span>Email domains</span><input type="text" name="domains" placeholder="northwind.com, northwind.co.uk">

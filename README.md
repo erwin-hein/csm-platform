@@ -1,8 +1,9 @@
 # Shearwater CSM/Engagement Platform — proof of concept
 
-The spec is [`CLAUDE.md`](CLAUDE.md). This PoC builds one slice of it: the Client/Engagement split,
-the generalized Deliverables engine, and multi-role access control, with the events spine
-underneath. None of the integrations, LLM features, portal, rules engine or digests are built.
+The spec is [`CLAUDE.md`](CLAUDE.md). This PoC builds a slice of it: the Client/Engagement split,
+the generalized Deliverables engine, the client portal, the CRM slice (opportunities, products,
+pipeline and forecast), and module-based access control, with the events spine underneath. None of
+the integrations, LLM features, rules engine or digests are built.
 
 ## What's here
 
@@ -11,7 +12,8 @@ underneath. None of the integrations, LLM features, portal, rules engine or dige
 | Schema (Alembic, Postgres) | `alembic/versions/0001_poc_core_schema.py`. PoC tables only, plus the `quickstart`/`migration` reference data |
 | ORM models | `app/models.py` |
 | Events spine | `app/events.py`. `emit()` plus the `@mutation` guard: a service function that writes without emitting its declared event raises. The DB rejects UPDATE/DELETE on `events` via a trigger |
-| Access rules | `app/access.py`. Membership-based visibility, ops/admin bypass |
+| Access rules | `app/access.py`. Module access from access roles (`use`/`manage` per module), then record access: engagement memberships, opportunity ownership. Admin screen in `app/web/admin.py` |
+| CRM | `app/services/opportunities.py` (opportunities, products, line items, the won → engagement bridge), `app/services/forecast.py` (pipeline, forecast, movement), pages in `app/web/crm.py` |
 | Business logic | `app/services/`. No rendering and no commits in here |
 | Web (Jinja2 + htmx) | `app/web/`, `app/templates/`, `app/static/` (htmx is vendored, no CDN) |
 | Auth | `app/web/auth.py`. Google OAuth limited to `@shearwaterdata.com` (checked server-side), `ADMIN_EMAILS` bootstrap, signed httponly session cookie. `app/web/csrf.py` does the Origin/Referer check |
@@ -65,7 +67,7 @@ uv run pytest                          # uses TEST_DATABASE_URL, default .../csm
 |---|---|
 | `DATABASE_URL` | Postgres. `postgres://` and `postgresql://` URLs are both accepted |
 | `SECRET_KEY` | Signs the session cookie |
-| `ADMIN_EMAILS` | Comma-separated. A listed email becomes `admin` on its first login; everyone else starts as `analyst` |
+| `ADMIN_EMAILS` | Comma-separated. A listed email becomes admin on its first login; everyone else starts with the default access roles (Delivery) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth web client. The redirect URI is `https://<host>/auth/google/callback` |
 | `ALLOWED_DOMAIN` | Default `shearwaterdata.com` |
 | `DEV_LOGIN_PASSCODE` | Turns on `/demo-login`. Leave unset to disable it |
@@ -90,9 +92,12 @@ Sign in at `/demo-login` as **Morgan Ellis (admin)**.
 5. **Working a deliverable.** On an engagement page, finished items start collapsed. The 💬 button on any deliverable opens its activity log and lets you comment without leaving the page. Items that simply come after unfinished work show a quiet "after X"; only blocks and held-up in-progress work are flagged loudly.
 6. **The client side.** On *Bluefin Tableau → Omni Migration*, the **Client view** tab shows exactly what the client's project lead sees: dashboards and tiles only, never phases or milestones. The **Client access** panel on the engagement page lists the two client users and their scope; admin, ops or the engagement's owner can invite, rescope or revoke. In any tile's 💬 pop-up, *Internal notes* and the *Client thread* are separate tabs with separate colours.
 7. **As the client.** Sign in at `/demo-login` as **Dr. Hannah Cho** (Bluefin project lead): she sees every dashboard and tile. Then sign in as **Marcus Reid** (Bluefin QA, assigned only): he sees only the tiles he owns, with their dashboards shown for context. *Daily census KPI* is in UAT and carries his earlier rejection plus Tomás's reply, so he can review it again. *Bed occupancy trend* isn't in UAT yet, so he can comment but not give a verdict.
-8. **The spine.** Every step above shows up in **Event log** (admin/ops), in the same transaction as the write.
+8. **The pipeline.** Sign in as **Nadia Osei (Sales lead)**. **Pipeline** shows a column per stage with $ totals and weighted totals; move a deal with the stage picker on its card (Closed Lost asks for a reason). The banner flags *Cobalt Store Ops Dashboards — Phase 2*: won, but no engagement delivers it yet. Open *Juniper Tableau → Omni Migration* to see the stage path, its two products (the amount is always their sum), and the probability/forecast overrides. **Forecast** shows the quarter (or month) by owner and forecast category, the outlook for the next periods, and recent movement, including *Northwind Creator Training*'s slipped close date.
+9. **The handoff.** As Morgan, the Portfolio shows the same won-but-undelivered flag. Open the opportunity and use **+ Create engagement from this**: client, name and type come prefilled from the product.
+10. **Module access.** As Morgan, open **Access**: roles × modules with `use`/`manage`, and who holds which roles. Every combination works: **Rafael Costa** (Sales) lands on the pipeline and never sees an engagement; **Aisha Bello** (Delivery) gets a 404 on the pipeline; **Priya Raman** (Delivery + Sales) has both; **Tomás Alvarez** (Delivery + Resourcing) can allocate people from **Team**. Give a role a new grant and it takes effect on the next page load.
+11. **The spine.** Every step above shows up in **Event log** (admin, or `manage` on a module), in the same transaction as the write.
 
-Seeded users (all fictional): Morgan Ellis (admin); Priya Raman, Tomás Alvarez, Aisha Bello (analysts); Jordan Kim (contractor). Client users on Bluefin: Dr. Hannah Cho (project lead, full scope) and Marcus Reid (QA, assigned only).
+Seeded users (all fictional), with their access roles: Morgan Ellis (admin); Elena Park (Operations); Priya Raman (Delivery + Sales); Tomás Alvarez (Delivery + Resourcing); Aisha Bello (Delivery); Jordan Kim (Delivery, contractor); Rafael Costa (Sales); Nadia Osei (Sales lead). Client users on Bluefin: Dr. Hannah Cho (project lead, full scope) and Marcus Reid (QA, assigned only). Prospects: Atlas Freight and Juniper Biotech.
 
 ## PoC judgment calls to review
 
@@ -117,7 +122,8 @@ These are small calls I made without you. Each one can be reverted. The larger s
 
 **Behaviour**
 - **Demo login** (`/demo-login`, off unless `DEV_LOGIN_PASSCODE` is set). Without it, seeded users can't be logged into, because they have no Google accounts. It goes through the same user-resolution path as Google, so the domain rule and `ADMIN_EMAILS` still apply. It's on in `render.yaml`, behind a generated passcode.
-- **Permissions:** creating clients and engagements, adding aliases and contacts, and managing teams are ops/admin only. Editing deliverables and stages is open to owners, collaborators and ops/admin. Viewers are read-only. A non-member gets a 404, never a 403, so an engagement's existence doesn't leak.
+- **Permissions** (now in CLAUDE.md §3 Identity & access): creating engagements needs `engagements:manage`; managing teams needs `engagements:manage` or `team:manage`; clients, aliases and contacts can be added with `engagements:manage` or `opportunities:use`. Editing deliverables and stages is open to owners, collaborators and `engagements:manage`. Viewers are read-only. A non-member gets a 404, never a 403, so an engagement's existence doesn't leak; so does a module you have no access to.
+- **CRM calls made without you** (all easy to change): closing an opportunity sets its close date to today; probability/forecast overrides are ignored while closed and come back if it's reopened; only a Closed Won opportunity can be linked to an engagement; the product's "delivered as" type prefills the engagement form; the forecast's movement list covers the last 14 days across all periods; an admin can't remove their own admin flag.
 - **Deliverable assignee** must be on the engagement's team (or be ops/admin).
 - **Blockers** must be on the same engagement. Cycles are rejected. Flagging something blocked requires a reason.
 - **Event log page** (`/events`, ops/admin). This is a read view of the spine, not a consumer.

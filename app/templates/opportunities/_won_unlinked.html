@@ -1,0 +1,7 @@
+{% if won_unlinked %}
+<div class="card handoff-flag">
+  <b>{{ won_unlinked | length }} won opportunit{{ 'y has' if won_unlinked | length == 1 else 'ies have' }} no engagement yet.</b>
+  <span class="small muted">Delivery hasn't been set up for {{ 'it' if won_unlinked | length == 1 else 'them' }}.{% if not user.can('engagements', 'manage') %} Ask ops to create or link the engagement.{% endif %}</span>
+  <ul class="small">{% for o in won_unlinked %}<li><a href="/opportunities/{{ o.id }}">{{ o.client.name }} · {{ o.name }}</a> — {{ o.amount | usd }}, won {{ o.close_date.strftime('%b %d') }}{% if o.owner %} · {{ o.owner.label }}{% endif %}</li>{% endfor %}</ul>
+</div>
+{% endif %}

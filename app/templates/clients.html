@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Clients{% endblock %}
+{% block content %}
+<div class="spread" style="margin-bottom:14px">
+  <div><h1>Clients</h1><div class="muted small">Clients and prospects. A prospect is a client with opportunities but no engagement yet.</div></div>
+  {% if can_create %}<a class="btn primary" href="/clients/new">+ Add Client</a>{% endif %}
+</div>
+<div class="card flush">
+  <table>
+    <tr><th>Client</th>{% if user.can('engagements') %}<th>Engagements</th>{% endif %}{% if user.can('opportunities') %}<th>Open pipeline</th><th>Won</th>{% endif %}</tr>
+    {% for c in clients %}{% set es = engagements[c.id] %}{% set os = opps[c.id] %}
+    <tr>
+      <td><a href="/clients/{{ c.id }}"><b>{{ c.name }}</b></a>{% if not c.engagements and os %} <span class="role-chip">prospect</span>{% endif %}<div class="small muted">{{ c.domains | join(' · ') }}</div></td>
+      {% if user.can('engagements') %}<td class="small">{% for e in es %}<a href="/engagements/{{ e.id }}">{{ e.name }}</a>{{ ', ' if not loop.last }}{% else %}<span class="muted">—</span>{% endfor %}</td>{% endif %}
+      {% if user.can('opportunities') %}
+      {% set open = os | rejectattr('is_closed') | list %}
+      <td class="small">{% if open %}{{ open | length }} · {{ open | sum(attribute='amount') | usd }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="small">{% set won = os | selectattr('is_won') | list %}{% if won %}{{ won | sum(attribute='amount') | usd }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      {% endif %}
+    </tr>
+    {% else %}<tr><td colspan="4" class="empty">No clients yet.</td></tr>{% endfor %}
+  </table>
+</div>
+{% endblock %}

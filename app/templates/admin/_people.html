@@ -1,0 +1,24 @@
+<div id="access-people" class="card flush">
+  <table>
+    <tr><th>Person</th><th>Access roles</th><th>Admin</th><th>Contractor</th><th>Effective access</th></tr>
+    {% for u in people %}
+    <tr>
+      <td><b>{{ u.label }}</b><div class="small muted">{{ u.email }}</div></td>
+      <td>
+        <form class="row" style="gap:10px" hx-post="/admin/access/users/{{ u.id }}/roles" hx-target="#access-people" hx-swap="outerHTML" hx-trigger="change">
+          {% for r in roles %}<label class="small"><input type="checkbox" name="role_ids" value="{{ r.id }}" {{ 'checked' if r in u.access_roles }}> {{ r.name }}</label>{% endfor %}
+        </form>
+      </td>
+      {% for flag, label in [('is_admin', 'admin'), ('is_contractor', 'contractor')] %}
+      <td>
+        <form class="inline" hx-post="/admin/access/users/{{ u.id }}/flags" hx-target="#access-people" hx-swap="outerHTML" hx-trigger="change">
+          {% for other in ['is_admin', 'is_contractor'] if other != flag and u[other] %}<input type="hidden" name="{{ other }}" value="true">{% endfor %}
+          <input type="checkbox" name="{{ flag }}" value="true" {{ 'checked' if u[flag] }} {{ 'disabled' if flag == 'is_admin' and u.id == user.id }} aria-label="{{ u.label }} is {{ label }}">
+        </form>
+      </td>
+      {% endfor %}
+      <td class="small">{% if u.is_admin %}everything{% else %}{% for m in modules %}{% set l = u.module_level(m.key) %}{% if l %}<span class="role-chip"><b>{{ m.label }}</b> {{ l }}</span> {% endif %}{% endfor %}{% if not u.access_roles %}<span class="warn-tag">no access</span>{% endif %}{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>

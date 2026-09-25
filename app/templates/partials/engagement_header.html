@@ -6,7 +6,8 @@
       <h1>{{ engagement.name }}</h1>
       <div class="row">{{ type_badge(engagement.type) }} {{ eng_status(engagement.status) }}
         <span class="small muted">Owner: {{ engagement.owner.label if engagement.owner else '—' }}</span>
-        {% if my_role %}<span class="small muted">· you: {{ my_role }}</span>{% elif user.bypasses_membership %}<span class="small muted">· you: {{ user.role }} (not on team)</span>{% endif %}
+        {% if engagement.opportunity and user.can('opportunities') %}<span class="small muted">· from <a href="/opportunities/{{ engagement.opportunity.id }}">{{ engagement.opportunity.name }}</a></span>{% endif %}
+        {% if my_role %}<span class="small muted">· you: {{ my_role }}</span>{% elif user.bypasses_membership %}<span class="small muted">· you: not on team (engagements:manage)</span>{% endif %}
       </div>
     </div>
     <div style="min-width: 220px">{{ progress_bar(tree.progress) }}<div style="margin-top:4px">{{ progress_text(tree.progress) }}</div></div>

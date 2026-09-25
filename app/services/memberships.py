@@ -5,10 +5,10 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.access import get_visible_engagement, require_ops_or_admin
+from app.access import require_can_manage_memberships
 from app.errors import NotFound, ValidationError
 from app.events import emit, mutation
-from app.models import MEMBERSHIP_ROLES, EngagementMembership, User
+from app.models import MEMBERSHIP_ROLES, Engagement, EngagementMembership, User
 
 
 def list_members(db: Session, engagement_id: uuid.UUID) -> list[EngagementMembership]:
@@ -28,13 +28,22 @@ def get_engagement_owner(db: Session, engagement_id: uuid.UUID) -> User | None:
         EngagementMembership.engagement_id == engagement_id, EngagementMembership.role == "owner"))
 
 
+def _team_engagement(db: Session, actor: User, engagement_id: uuid.UUID) -> Engagement:
+    """Teams are managed with engagements:manage or team:manage (the Team screens list every
+    open engagement, so team:manage reaches engagements its holder isn't on)."""
+    require_can_manage_memberships(actor)
+    engagement = db.get(Engagement, engagement_id)
+    if engagement is None:
+        raise NotFound("Engagement not found")
+    return engagement
+
+
 @mutation("membership_granted")
 def assign_member(db: Session, actor: User, engagement_id: uuid.UUID, *, user_id: uuid.UUID,
                   role: str) -> EngagementMembership:
     """Grant (or change) a user's role on an engagement. One owner per engagement:
     making someone owner demotes the previous owner to collaborator."""
-    require_ops_or_admin(actor)
-    engagement = get_visible_engagement(db, actor, engagement_id)
+    engagement = _team_engagement(db, actor, engagement_id)
     if role not in MEMBERSHIP_ROLES:
         raise ValidationError(f"Role must be one of {', '.join(MEMBERSHIP_ROLES)}")
     user = db.get(User, user_id)
@@ -43,6 +52,8 @@ def assign_member(db: Session, actor: User, engagement_id: uuid.UUID, *, user_id
     if user.user_type != "internal":
         # client_external grants belong to the portal, which is out of PoC scope.
         raise ValidationError("Only internal users can be assigned here")
+    if not user.can("engagements"):
+        raise ValidationError(f"{user.label} has no access to engagements; an admin can grant it under Access")
 
     demoted = None
     if role == "owner":
@@ -73,8 +84,7 @@ def assign_member(db: Session, actor: User, engagement_id: uuid.UUID, *, user_id
 
 @mutation("membership_revoked")
 def remove_member(db: Session, actor: User, engagement_id: uuid.UUID, *, user_id: uuid.UUID) -> None:
-    require_ops_or_admin(actor)
-    engagement = get_visible_engagement(db, actor, engagement_id)
+    engagement = _team_engagement(db, actor, engagement_id)
     membership = db.get(EngagementMembership, (engagement.id, user_id))
     if membership is None:
         raise NotFound("That user isn't on this engagement")

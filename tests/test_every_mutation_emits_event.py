@@ -11,7 +11,7 @@ from sqlalchemy import select
 import app.services
 from app.events import MUTATIONS, mutation
 from app.models import Event
-from app.services import client_portal, clients, deliverables, engagements, memberships, users
+from app.services import access_roles, client_portal, clients, deliverables, engagements, memberships, opportunities, users
 
 READ_PREFIXES = ("get_", "list_", "derive_", "kinds_for_", "blocker_", "blocking_", "engagement_", "parent_",
                  "is_allowed_", "can_")
@@ -84,6 +84,23 @@ def test_each_mutation_writes_its_event_row(db, world):
     run(client_portal.add_client_comment, a, dash.id, body="Ready for review")
     run(client_portal.submit_review, m.user, dash.id, verdict="accepted")
     run(client_portal.revoke_client_access, a, e.id, user_id=m.user_id)
+
+    role = run(access_roles.create_access_role, a, name="Finance")
+    run(access_roles.update_access_role, a, role.id, is_default=True)
+    run(access_roles.set_role_grant, a, role.id, module_key="opportunities", level="use")
+    run(access_roles.set_user_roles, a, world.bob.id, role_ids=[role.id])
+    run(access_roles.set_user_flags, a, world.bob.id, is_contractor=True)
+
+    prod = run(opportunities.create_product, a, name="Widget", pricing_model="fixed_bid", default_unit_price="1000")
+    run(opportunities.update_product, a, prod.id, name="Widget", pricing_model="fixed_bid", default_unit_price="1200")
+    o = run(opportunities.create_opportunity, a, client_id=c.id, name="Initech deal", stage_key="discovery",
+            close_date="2030-01-01", product_id=prod.id)
+    run(opportunities.update_opportunity, a, o.id, next_step="Call")
+    li = run(opportunities.add_line_item, a, o.id, product_id=prod.id, quantity=2)
+    run(opportunities.update_line_item, a, li.id, quantity=3, unit_price="1000")
+    run(opportunities.remove_line_item, a, li.id)
+    run(opportunities.change_opportunity_stage, a, o.id, stage_key="closed_won")
+    run(engagements.link_opportunity, a, qs.id, opportunity_id=o.id)
 
     assert exercised == set(MUTATIONS), f"Add a case for: {set(MUTATIONS) - exercised}"
 

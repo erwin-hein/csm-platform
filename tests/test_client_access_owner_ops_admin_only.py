@@ -20,7 +20,8 @@ def test_owner_ops_and_admin_can_invite(db, world, contact):
 
 
 def test_collaborators_viewers_and_contractors_cannot(db, world, contact):
-    carl = users.create_internal_user(db, None, email="carl@shearwaterdata.com", display_name="Carl", role="contractor")
+    carl = users.create_internal_user(db, None, email="carl@shearwaterdata.com", display_name="Carl",
+                                  roles=["Delivery"], is_contractor=True)
     other_eng = world.bob_eng
     memberships.assign_member(db, world.admin, world.alice_eng.id, user_id=world.bob.id, role="collaborator")
     memberships.assign_member(db, world.admin, other_eng.id, user_id=carl.id, role="owner")  # contractor owner

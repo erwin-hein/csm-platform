@@ -25,11 +25,11 @@
     <ul class="team-list">
       {% for u in users %}
       <li><div class="row" style="gap:8px">{{ initials(u) }}<div><b>{{ u.label }}</b><div class="small muted">{{ u.email }}</div></div></div>
-        <div class="small" style="text-align:right; white-space:nowrap"><span class="role-chip">{{ u.role }}</span>
+        <div class="small" style="text-align:right; white-space:nowrap"><span class="role-chip">{{ u.access_label }}</span>
           <div class="muted" style="margin-top:3px">{% if u.bypasses_membership %}sees all{% else %}{% set l = load[u.id] %}{{ l['owner'] or 0 }} owned · {{ l['collaborator'] or 0 }} collab{% if l['viewer'] %} · {{ l['viewer'] }} view{% endif %}{% endif %}</div></div></li>
       {% endfor %}
     </ul>
-    <p class="small muted" style="margin-top:12px">New people appear here after their first sign-in (default role: analyst).</p>
+    <p class="small muted" style="margin-top:12px">Only people with engagements access are listed. New people appear after their first sign-in, with the default access roles; an admin changes them under Access.</p>
   </div>
 </div>
 {% endblock %}

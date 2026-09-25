@@ -22,17 +22,31 @@
 <header class="topbar">
   <a class="brand" href="/">Shearwater <span>Engagements</span></a>
   <nav>
+    {% if user.can('engagements') %}
     <a href="/" class="{{ 'active' if nav == 'portfolio' }}">Portfolio</a>
     {% for key, label in nav_types %}
     <a href="/board/{{ key }}" class="{{ 'active' if nav == 'board:' ~ key }}">{{ label }} board</a>
     {% endfor %}
-    {% if user.bypasses_membership %}
+    {% endif %}
+    {% if user.can('opportunities') %}
+    <a href="/pipeline" class="{{ 'active' if nav == 'pipeline' }}">Pipeline</a>
+    <a href="/forecast" class="{{ 'active' if nav == 'forecast' }}">Forecast</a>
+    {% endif %}
+    {% if user.can('opportunities') or user.can('engagements', 'manage') %}
+    <a href="/clients" class="{{ 'active' if nav == 'clients' }}">Clients</a>
+    {% endif %}
+    {% if user.can('team') %}
     <a href="/team" class="{{ 'active' if nav == 'team' }}">Team</a>
+    {% endif %}
+    {% if user.can('engagements', 'manage') or user.can('opportunities', 'manage') %}
     <a href="/events" class="{{ 'active' if nav == 'events' }}">Event log</a>
+    {% endif %}
+    {% if user.is_admin %}
+    <a href="/admin/access" class="{{ 'active' if nav == 'access' }}">Access</a>
     {% endif %}
   </nav>
   <div class="me">
-    <span>{{ user.label }}</span><span class="role-badge">{{ user.role }}</span>
+    <span>{{ user.label }}</span><span class="role-badge" title="{{ user.access_label }}">{{ 'admin' if user.is_admin else (user.access_roles | map(attribute='name') | first or 'no access') }}{% if not user.is_admin and user.access_roles | length > 1 %} +{{ user.access_roles | length - 1 }}{% endif %}</span>
     <form method="post" action="/logout"><button type="submit">Sign out</button></form>
   </div>
 </header>

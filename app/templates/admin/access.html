@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Access{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<h1>Access</h1>
+<p class="muted" style="max-width:820px">Two separate things decide what someone sees. <b>Module access</b> (here) decides which areas of the app they can enter: an access role grants <i>use</i> or <i>manage</i> per module, people can hold several roles, and the highest level wins. <b>Record access</b> inside a module is separate: for engagements it's the team membership, for opportunities it's ownership. <i>Manage</i> sees and edits every record in its module. Admins bypass all of it.</p>
+{% include "admin/_roles.html" %}
+<form class="card row" method="post" action="/admin/access/roles" style="margin-top:12px">
+  <b>+ New role</b>
+  <input type="text" name="name" required placeholder="e.g. Finance" style="width:200px">
+  <input type="text" name="description" placeholder="what it's for" style="flex:1; min-width:220px">
+  <button class="btn small primary" type="submit">Create</button>
+</form>
+<h2 style="margin-top:24px">People</h2>
+{% include "admin/_people.html" %}
+{% endblock %}
