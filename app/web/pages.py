@@ -32,13 +32,13 @@ from app.models import (
     Event,
     User,
 )
+from app.services import board as board_service
 from app.services import capacity as capacity_service
 from app.services import client_portal
 from app.services import clients as client_service
 from app.services import deliverables as deliverable_service
 from app.services import engagements as engagement_service
 from app.services import memberships as membership_service
-from app.services import stages as stage_service
 from app.services import users as user_service
 from app.web.auth import current_user
 from app.web.templating import is_htmx, render
@@ -108,23 +108,23 @@ def board_default():
 
 
 @router.get("/board/{type_key}")
-def board(type_key: str, request: Request, show_closed: bool = False, db: Session = Depends(get_db),
-          user: User = Depends(current_user)):
+def board(type_key: str, request: Request, group: str = "", sort: str = "", show_closed: bool = False,
+          db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """One big card per engagement, grouped and sorted as the viewer chooses."""
     try:
         etype = engagement_service.get_engagement_type(db, type_key)
     except ValidationError:
         raise NotFound("No such engagement type")
     engagements = engagement_service.list_visible_engagements(db, user, type_key=type_key,
                                                               include_closed=show_closed)
-    columns = {s["key"]: [] for s in etype.stage_vocab}
-    for e in engagements:
-        summary = _engagement_summary(db, e)
-        # A card appears in every active stage's column (stages can run concurrently).
-        for key in stage_service.derive_board_keys(e.stage_states):
-            columns.setdefault(key, []).append(summary)
-    return render(request, "board.html", nav=f"board:{type_key}", etype=etype, columns=columns,
-                  types=engagement_service.list_engagement_types(db), show_closed=show_closed,
-                  kinds=deliverable_service.kinds_for_type(db, type_key))
+    cards = [board_service.derive_card(db, e, kind_counts=_kind_counts(db, e)) for e in engagements]
+    group = group if group in board_service.GROUPINGS else board_service.derive_default_grouping(etype)
+    sort = sort if sort in board_service.SORTS else "deadline"
+    return render(request, "board.html", nav=f"board:{type_key}", etype=etype,
+                  groups=board_service.derive_board(etype, cards, group=group, sort=sort),
+                  group=group, sort=sort, show_closed=show_closed, card_count=len(cards),
+                  group_options=board_service.GROUPINGS, sort_options=board_service.SORTS,
+                  default_group=board_service.derive_default_grouping(etype))
 
 
 # ---------------------------------------------------------------- clients
@@ -185,11 +185,12 @@ def engagement_new(request: Request, client_id: str = "", db: Session = Depends(
 
 @router.post("/engagements")
 def engagement_create(client_id: str = Form(""), type_key: str = Form(""), name: str = Form(""),
-                      db: Session = Depends(get_db), user: User = Depends(current_user)):
+                      started_on: str = Form(""), db: Session = Depends(get_db), user: User = Depends(current_user)):
     cid = _uuid(client_id)
     if cid is None:
         raise ValidationError("Pick a client")
-    engagement = engagement_service.create_engagement(db, user, client_id=cid, type_key=type_key, name=name)
+    engagement = engagement_service.create_engagement(db, user, client_id=cid, type_key=type_key, name=name,
+                                                      started_on=started_on or None)
     db.commit()
     return _back(f"/engagements/{engagement.id}")
 

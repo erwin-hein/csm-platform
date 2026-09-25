@@ -62,11 +62,12 @@ def test_quickstart_keeps_a_hand_set_linear_stage(db, world):
     assert (s["kickoff"], s["dev_training"], s["codev"], s["wrapup"]) == ("done", "done", "active", "upcoming")
 
 
-def test_board_shows_a_card_in_every_active_column(http, db, world):
+def test_board_grouped_by_stage_shows_a_card_under_every_active_stage(http, db, world):
     e, a = world.alice_eng, world.admin
     for key in ("semantic_parity", "dashboard_build"):
         p = D.create_deliverable(db, a, e.id, kind="phase", name=key, stage_key=key)
         D.update_deliverable(db, a, p.id, pipeline_status="in_progress")
     db.flush()
-    page = login(http, world.admin.email).get("/board/migration").text
-    assert page.count("Acme Migration") == 2
+    admin = login(http, world.admin.email)
+    assert admin.get("/board/migration?group=stage").text.count("Acme Migration") == 2
+    assert admin.get("/board/migration?group=none").text.count("Acme Migration") == 1

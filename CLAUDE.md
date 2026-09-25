@@ -122,7 +122,7 @@ CREATE TABLE engagement_types (
   key TEXT PRIMARY KEY,                -- 'quickstart' | 'migration' | 'support_retainer' | ...
   display_name TEXT,
   storage_mode TEXT NOT NULL,          -- 'jsonb' | 'graduated'
-  stage_vocab JSONB NOT NULL,          -- ordered [{key,label}], drives board columns
+  stage_vocab JSONB NOT NULL,          -- ordered [{key,label}]: the type's stages (boards can group by them)
   stage_kind TEXT,                     -- the deliverable kind that stands for stages (migration → 'phase'); NULL = stage set by hand
   FOREIGN KEY (key, stage_kind) REFERENCES deliverable_kinds(engagement_type_key, kind)
 );
@@ -131,7 +131,14 @@ CREATE TABLE engagement_types (
 **Stages — one mechanism for every type, and stages can run concurrently.** Every engagement has a *set* of active stages; a "linear" type is simply one whose work happens to run one stage at a time, so there is no sequential/concurrent switch. Each stage is `done`, `active`, `upcoming` or `empty` (nothing planned), always derived, never stored:
 - **Type with a `stage_kind`** (migration → phase): each deliverable of that kind carries the `stage_key` it stands for. A stage is `done` when all its linked deliverables are finished (done or N/A), `active` when any of them (or any of their children) has started, `upcoming` when they all exist but none has started, and `empty` when none is linked. Several stages can be active at once, and nothing is moved by hand: `engagements.stage` is NULL for these types, and a stage-kind deliverable must name its stage. When a deliverable change moves a stage's state, a `stage_state_changed` event records it, so the spine still sees stage movement.
 - **Type without one** (quickstart, whose curriculum modules don't map onto its stages): the hand-set `engagements.stage` decides. Stages before it are done, it is active, the rest are upcoming; moving it emits `stage_changed`.
-- The board shows an engagement's card in **every** active column. With nothing active, it goes to the first stage that isn't done.
+- When a board is grouped by stage, an engagement's card appears under **every** active stage. With nothing active, it goes under the first stage that isn't done.
+
+**Boards — one big card per engagement, grouped and sorted by the viewer.** Not a fixed stage-column (kanban) layout: people juggling several engagements, migrations especially, don't think in stage columns, and some teams use phases as sprints. Each card shows client, name, active stage(s), progress, next deadline (or the overdue count), how long it has been running, items in UAT, and the team.
+- **Group by:** none, stage, client, or owner.
+- **Sort by:** closest deadline (overdue first; undated last), alphabetical (client, then name), longest running, or stage.
+- **Defaults are derived from the type, not hard-coded per type.** Types with hand-set, linear stages (quickstart) group by stage; types with derived, concurrent stages (migration) aren't grouped. A viewer's last choice per board is remembered in their browser.
+- **"Next deadline"** is the earliest `target_date` among the engagement's open deliverables. Engagements have no deadline column of their own.
+- **"Running"** counts from `engagements.started_at`, which can be set when creating an engagement that's already under way.
 
 **The two core types' vocabularies, drafted now** (a loose end flagged earlier in this document, resolved once PoC seed data made it concrete) — grounded in the reference tool's actual stage/kind vocabulary, not invented from scratch:
 
@@ -722,3 +729,4 @@ Dated entries for traceability — why something is the way it is, in case it's 
   - **Stages.** Erwin asked whether stage concurrency should be one flexible mechanism rather than a per-type switch, and preferred deriving stages from the work over setting them by hand. Built as one mechanism: every engagement has a set of active stages. A type that declares a `stage_kind` (migration → phase) derives them from those deliverables (`stage_key`), so modeling and dashboarding can both be active. A type without one (quickstart) keeps a hand-set stage. This removes the old duplication where migration phases mirrored a separately-set stage pointer.
   - **Dashboards tracked by count.** Erwin's concern was that listing every tile of a large dashboard is too much of a lift, and the system would go unused. Parents of `bulk_child_counts` kinds now track unlisted children as per-status counts, with only troublesome tiles listed individually; both fold into the same rollup (his example: a 99-tile dashboard with 2 listed tiles and 97 counted).
   - **Client access.** Provisioning it from the Team/allocation area would bottleneck on ops, whose job is higher-level (engagement health, team allocation, relations). Client access now lives in its own panel on the engagement page and is limited to admin, ops, or the engagement's owner, not collaborators or contractors.
+- **Boards redesigned as cards with grouping and sorting (2026-09-25)**: Erwin disliked the by-stage kanban inherited from Hao's tool. It's clunky for people with many engagements, migrations don't map onto stage columns (and some teams use phases as sprints), and each board repeated a type switcher the top nav already provides. Replaced with one big card per engagement, which the viewer can group (none / stage / client / owner) and sort (closest deadline / alphabetical / longest running / stage), and the duplicate switcher was removed. Stage grouping stays the default only where stages are hand-set and linear (quickstart), a rule derived from the type rather than hard-coded. `started_at` became settable at creation so "longest running" is meaningful for engagements entered mid-flight.

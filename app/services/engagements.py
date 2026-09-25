@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,7 +38,8 @@ def list_visible_engagements(db: Session, user: User, *, type_key: str | None = 
 
 @mutation("engagement_created")
 def create_engagement(db: Session, actor: User, *, client_id: uuid.UUID, type_key: str, name: str,
-                      stage: str | None = None) -> Engagement:
+                      stage: str | None = None, started_on: date | str | None = None) -> Engagement:
+    """started_on lets an engagement that's already under way be entered with its real start date."""
     require_ops_or_admin(actor)
     client = get_visible_client(db, actor, client_id)
     etype = get_engagement_type(db, type_key)
@@ -54,12 +55,23 @@ def create_engagement(db: Session, actor: User, *, client_id: uuid.UUID, type_ke
         stage = stage or etype.stage_keys[0]
         if stage not in etype.stage_keys:
             raise ValidationError(f"'{stage}' is not a {etype.display_name} stage")
+    if started_on in (None, ""):
+        started_at = datetime.now(timezone.utc)
+    else:
+        try:
+            day = started_on if isinstance(started_on, date) else date.fromisoformat(started_on)
+        except ValueError:
+            raise ValidationError(f"'{started_on}' is not a valid date")
+        if day > date.today():
+            raise ValidationError("An engagement can't start in the future")
+        started_at = datetime.combine(day, time(9), tzinfo=timezone.utc)
     engagement = Engagement(client_id=client.id, type_key=etype.key, name=name, stage=stage,
-                            status="active", started_at=datetime.now(timezone.utc))
+                            status="active", started_at=started_at)
     db.add(engagement)
     db.flush()
     emit(db, entity_type="engagement", entity_id=engagement.id, event_type="engagement_created", actor=actor,
-         payload={"client_id": client.id, "type_key": etype.key, "name": name, "stage": stage})
+         payload={"client_id": client.id, "type_key": etype.key, "name": name, "stage": stage,
+                  "started_at": started_at})
     return engagement
 
 

@@ -1,34 +1,75 @@
 {% extends "base.html" %}
-{% from "macros.html" import progress_bar, progress_text, kind_mix, eng_status %}
+{% from "macros.html" import type_badge, progress_bar, progress_text, kind_mix, eng_status, initials %}
 {% block title %}{{ etype.display_name }} board{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
 <div class="spread" style="margin-bottom: 14px">
   <div>
     <h1>{{ etype.display_name }} board</h1>
-    <div class="muted small">Columns come from the <code>{{ etype.key }}</code> type's stage vocabulary ({{ etype.stage_vocab | length }} stages).
-      Deliverable kinds: {% for k in kinds %}<b>{{ k.display_name }}</b>{% if k.parent_kind %} (under {{ k.parent_kind }}){% endif %}{{ ', ' if not loop.last }}{% endfor %}.</div>
+    <div class="muted small">{{ card_count }} engagement{{ 's' if card_count != 1 }}{% if not show_closed %}, completed and cancelled hidden{% endif %}.</div>
   </div>
-  <div class="row">
-    <div class="type-tabs">{% for t in types %}<a class="{{ 'on' if t.key == etype.key }} {{ t.key }}" href="/board/{{ t.key }}">{{ t.display_name }}</a>{% endfor %}</div>
-    <a class="btn small" href="?show_closed={{ 'false' if show_closed else 'true' }}">{{ 'Hide' if show_closed else 'Show' }} completed/cancelled</a>
-  </div>
+  <form class="board-controls" method="get" id="board-controls">
+    <label>Group by
+      <select name="group" onchange="this.form.requestSubmit()">{% for k, label in group_options.items() %}<option value="{{ k }}" {{ 'selected' if k == group }}>{{ label }}{{ ' (default)' if k == default_group }}</option>{% endfor %}</select></label>
+    <label>Sort by
+      <select name="sort" onchange="this.form.requestSubmit()">{% for k, label in sort_options.items() %}<option value="{{ k }}" {{ 'selected' if k == sort }}>{{ label }}</option>{% endfor %}</select></label>
+    <label class="check"><input type="checkbox" name="show_closed" value="true" {{ 'checked' if show_closed }} onchange="this.form.requestSubmit()"> Show completed/cancelled</label>
+  </form>
 </div>
-<div class="board {{ etype.key }}">
-  {% for stage in etype.stage_vocab %}
-  <div class="col">
-    <div class="col-head"><span>{{ stage.label }}</span><span class="muted">{{ columns[stage.key] | length }}</span></div>
-    {% for s in columns[stage.key] %}{% set e = s.engagement %}
-    <a class="ecard" href="/engagements/{{ e.id }}">
-      <div class="client">{{ e.client.name }}</div>
-      <div class="title">{{ e.name }} {{ eng_status(e.status) }}</div>
-      {{ progress_bar(s.progress) }}
-      <div style="margin-top:5px">{{ progress_text(s.progress) }}</div>
-      <div style="margin-top:5px">{{ kind_mix(s.kind_counts) }}</div>
-      <div class="small muted" style="margin-top:5px">{{ e.owner.label if e.owner else 'No owner' }}</div>
+
+<div class="board-groups {{ 'grouped' if group != 'none' }}">
+{% for g in groups %}
+<section class="board-group" style="--cards: {{ [g.cards | length, 3] | min }}">
+  {% if g.label %}<h2 class="board-group-head">{{ g.label }} <span class="muted">{{ g.cards | length }}</span></h2>{% endif %}
+  <div class="card-grid">
+    {% for c in g.cards %}{% set e = c.engagement %}
+    <a class="bcard accent-{{ e.type_key }}" href="/engagements/{{ e.id }}">
+      <div class="spread bcard-top">
+        <div class="row" style="gap:6px">{{ type_badge(e.type) }} {{ eng_status(e.status) }}</div>
+        <div class="avatars">{% for u in c.team[:4] %}{{ initials(u) }}{% endfor %}{% if c.team | length > 4 %}<span class="avatar more">+{{ c.team | length - 4 }}</span>{% endif %}</div>
+      </div>
+      <div class="bcard-client">{{ e.client.name }}</div>
+      <div class="bcard-name">{{ e.name }}</div>
+
+      <div class="bcard-stages">
+        {% for s in c.active_stages %}<span class="stage-chip">{{ s.label }}</span>{% else %}<span class="muted small">{{ e.stage_label }}</span>{% endfor %}
+      </div>
+      <div class="stepper mini {{ e.type_key }}">{% for s in c.stage_states %}<div class="step st-{{ s.state }}" title="{{ s.label }} · {{ s.state }}"></div>{% endfor %}</div>
+
+      <div class="bcard-progress">{{ progress_bar(c.progress) }}
+        <div class="spread small" style="margin-top:4px"><span>{{ progress_text(c.progress) }}</span><b>{{ c.progress.pct }}%</b></div></div>
+
+      <div class="bcard-facts">
+        <div class="fact {{ 'bad' if c.overdue }}"><span>Next deadline</span>
+          <b>{% if c.overdue %}{{ c.overdue }} overdue{% elif c.next_deadline %}{{ c.next_deadline.strftime('%b %d') }}{% else %}—{% endif %}</b>
+          {% if not c.overdue and c.next_deadline_item %}<small title="{{ c.next_deadline_item }}">{{ c.next_deadline_item }}</small>{% elif c.overdue and c.next_deadline %}<small>then {{ c.next_deadline.strftime('%b %d') }}</small>{% endif %}</div>
+        <div class="fact"><span>Running</span><b>{% if c.lifetime_days is not none %}{{ c.lifetime_days }} day{{ 's' if c.lifetime_days != 1 }}{% else %}—{% endif %}</b>
+          <small>{% if e.started_at %}since {{ e.started_at.strftime('%b %d') }}{% endif %}</small></div>
+        <div class="fact {{ 'uat' if c.in_uat }}"><span>In UAT</span><b>{{ c.in_uat }}</b><small>with the client</small></div>
+      </div>
+
+      <div class="spread bcard-foot small">
+        <span>{{ kind_mix(c.kind_counts) }}</span>
+        <span class="muted">{{ c.owner.label if c.owner else 'No owner' }}</span>
+      </div>
     </a>
     {% endfor %}
   </div>
-  {% endfor %}
+</section>
+{% else %}
+<div class="card empty">No {{ etype.display_name }} engagements{% if not show_closed %} open{% endif %}.</div>
+{% endfor %}
 </div>
+<script>
+  // Remember this viewer's grouping/sorting per board (browser-local convenience only).
+  (function () {
+    const key = 'board:{{ etype.key }}';
+    try {
+      if (!location.search) {
+        const saved = localStorage.getItem(key);
+        if (saved) { location.replace(location.pathname + saved); return; }
+      } else { localStorage.setItem(key, location.search); }
+    } catch (e) {}
+  })();
+</script>
 {% endblock %}
