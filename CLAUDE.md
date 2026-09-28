@@ -774,7 +774,15 @@ The six items surfaced during the PoC build (2026-09-24) were all resolved the s
 
 Items raised during the post-PoC iterations (concurrent stages, the portal slice) were resolved and folded into §3 — see §6.
 
-The CRM slice and module-based access (raised 2026-09-25) were resolved the same day and folded into §2/§3 — see §6. **None open.**
+The CRM slice and module-based access (raised 2026-09-25) were resolved the same day and folded into §2/§3 — see §6.
+
+**Open (raised 2026-09-28): Malloy as a semantic layer, and dashboards on top of it.** A loose requirement to explore, not yet a decision. Proposal under discussion:
+- **Read-only, beside the app, never in the write path.** A Malloy model over the same Postgres (a read-only role, later a replica), served by Malloy Publisher as a private service. It never replaces the service layer, and it relates to the deferred analytics row in §4: a lighter version of it, without a warehouse.
+- **Stored facts only; derived logic stays single-sourced.** The model covers what's stored (line-item amounts, pipeline by stage/product, deliverable counts by status, event-based throughput). Derived states (`dep_state`, stage states, progress with bulk counts, the forecast rules) stay in Python unless they move into SQL views both sides read. A test compares Malloy's numbers with the services' on seed data, so the two can't disagree.
+- **The app decides access; Malloy only applies it.** Publisher is unauthenticated by design, so it's never reachable from a browser. FastAPI calls it server-side and passes the viewer's scope (visible engagement ids, portal scope) as givens, with `#(access_filter)` as defence in depth. Givens are still experimental in Malloy, which matters most for the portal.
+- **Rendering.** `<malloy-render>` is a web component and works with the server-rendered + htmx frontend (§2 row 12). The Publisher React SDK and HTML data apps would be a per-page exception.
+- **Suggested order.** (1) the model and the drift test; (2) an internal analytics page for `manage` roles, where no row-level filtering is needed; (3) only then a client-facing project overview in the portal, with portal scope-isolation tests.
+- **Still to decide:** what's driving it (internal reporting, client-facing, company direction); how it relates to Omni, which §4 names for this role; which surface comes first.
 
 ---
 
