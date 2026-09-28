@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Semantic model{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<div class="spread" style="margin-bottom:12px">
+  <div>
+    <h1>Semantic model <span class="sx-demo-tag">Malloy · admin only</span></h1>
+    {% if model %}<div class="small muted" style="max-width:900px">{{ model.model_doc }}</div>{% endif %}
+  </div>
+  {% if model %}<div class="small muted" style="text-align:right">{{ model.model }}<br>Malloy {{ model.malloy_version }} · {{ model.sources | length }} sources · {{ model.views | length }} views</div>{% endif %}
+</div>
+
+{% if missing %}
+<div class="card flash">{{ missing }}</div>
+{% else %}
+{% if stale %}<div class="card handoff-flag"><b>The model file changed since it was last compiled.</b> <span class="small">What's shown here is the last compiled version. Run <code>npm run compile</code> in <code>analytics/</code> and commit <code>analytics/build/csm.model.json</code>.</span></div>{% endif %}
+
+<div class="sem-layout">
+  <nav class="card flush sem-nav">
+    {% for s in model.sources %}
+    <a href="/admin/semantic?source={{ s.name }}" class="{{ 'on' if current and current.name == s.name }}"><code>{{ s.name }}</code>{% if view_counts[s.name] %}<span class="small muted">{{ view_counts[s.name] }} view{{ 's' if view_counts[s.name] != 1 }}</span>{% endif %}</a>
+    {% endfor %}
+    <a href="/admin/semantic?source=_file" class="{{ 'on' if show_file }}"><span>Model file</span><span class="small muted">.malloy</span></a>
+    <div class="small muted sem-help">Explore ad hoc from <code>analytics/</code>:<br><code>npm run query -- "run: opportunities -&gt; pipeline_by_stage"</code></div>
+  </nav>
+
+  <div class="stack">
+  {% if show_file %}
+    <div class="card"><h2><code>{{ model.model }}</code></h2><pre class="sem-code">{{ model.malloy_text }}</pre></div>
+  {% else %}{% set s = current %}
+    <div class="card">
+      <h2><code>{{ s.name }}</code></h2>
+      <p class="muted" style="margin-top:0">{{ s.doc or 'No description.' }}</p>
+      {% for kind, label in [('dimension', 'Dimensions'), ('measure', 'Measures'), ('join', 'Joins')] %}
+      {% set fields = s.fields | selectattr('kind', 'equalto', kind) | list %}
+      {% if fields %}
+      <h3>{{ label }} <span class="muted small">{{ fields | length }}</span></h3>
+      <table class="sem-fields">
+        {% for f in fields %}
+        <tr><td><code>{{ f.name }}</code></td>
+          <td class="small muted">{% if kind == 'join' %}<a href="/admin/semantic?source={{ f.source }}"><code>{{ f.source }}</code></a> · join_{{ f.join }}{% else %}{{ f.type }}{% endif %}</td>
+          <td class="small">{{ f.doc }}</td></tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% for v in views %}
+    <div class="card" id="view-{{ v.name }}">
+      <div class="spread"><h3 style="margin:0"><code>{{ v.name }}</code></h3>
+        <form class="inline" hx-post="/admin/semantic/run" hx-target="#result-{{ v.name }}" hx-swap="innerHTML">
+          <input type="hidden" name="source" value="{{ v.source }}"><input type="hidden" name="view" value="{{ v.name }}">
+          <button class="btn small primary" type="submit">Run</button>
+        </form></div>
+      {% if v.doc %}<p class="small muted" style="margin:4px 0 8px">{{ v.doc }}</p>{% endif %}
+      <pre class="sem-code">{{ v.malloy }}</pre>
+      <details class="small"><summary>Compiled SQL</summary><pre class="sem-code sql">{{ v.sql }}</pre></details>
+      <div id="result-{{ v.name }}"></div>
+    </div>
+    {% else %}
+    <p class="small muted">This source has no named views. Query it ad hoc with <code>npm run query</code>.</p>
+    {% endfor %}
+  {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

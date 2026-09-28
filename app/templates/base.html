@@ -44,6 +44,7 @@
     {% if user.is_admin %}
     <a href="/admin/access" class="{{ 'active' if nav == 'access' }}">Access</a>
     <a href="/admin/schema" class="{{ 'active' if nav == 'schema' }}" title="PoC demo aid" hx-boost="false">Schema</a>
+    <a href="/admin/semantic" class="{{ 'active' if nav == 'semantic' }}" title="The Malloy semantic model">Semantic model</a>
     {% endif %}
   </nav>
   <div class="me">
