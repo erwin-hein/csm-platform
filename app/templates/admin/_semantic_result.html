@@ -1,0 +1,17 @@
+{% macro fmt(v) -%}
+{%- if v is none %}<span class="muted">—</span>
+{%- elif v is sameas true or v is sameas false %}{{ 'yes' if v else 'no' }}
+{%- elif v is number and v is not integer %}{{ '{:,.2f}'.format(v) }}
+{%- elif v is integer %}{{ '{:,}'.format(v) }}
+{%- else %}{{ v }}{% endif -%}
+{%- endmacro %}
+<div class="sem-result">
+  {% if not result.rows %}<p class="small muted">No rows. Ran read-only.</p>
+  {% else %}
+  <table>
+    <tr>{% for c in result.columns %}<th class="{{ 'num' if result.rows[0][loop.index0] is number }}">{{ c }}</th>{% endfor %}</tr>
+    {% for row in result.rows %}<tr>{% for v in row %}<td class="{{ 'num' if v is number }}">{{ fmt(v) }}</td>{% endfor %}</tr>{% endfor %}
+  </table>
+  <p class="small muted">{{ result.rows | length }} row{{ 's' if result.rows | length != 1 }}{% if result.truncated %}, capped at {{ limit }}{% endif %}. Ran read-only.</p>
+  {% endif %}
+</div>

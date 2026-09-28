@@ -34,8 +34,42 @@ jobs:
       - run: uv sync --frozen
       - run: uv run pytest -q
 
+  # The Malloy semantic model (CLAUDE.md §3 Semantic layer) compiles against the migrated schema,
+  # every view runs, and the committed analytics/build/ matches what the model compiles to.
+  semantic-model:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: csm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgresql://postgres@127.0.0.1:5432/csm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run alembic upgrade head
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: analytics/package-lock.json
+      - run: npm ci
+        working-directory: analytics
+      - run: npm run compile -- --check
+        working-directory: analytics
+
   image:
-    needs: test
+    needs: [test, semantic-model]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:

@@ -428,3 +428,19 @@ tr.on td { background: #eef3fd; }
 .access-matrix select.lvl-manage { background: #e8eefc; font-weight: 600; }
 .access-matrix select.lvl-use { background: #f3f6fb; }
 main.full { max-width: none; padding: 16px 20px 0; }
+
+/* ---- semantic model (admin) */
+.sem-layout { display: grid; grid-template-columns: 250px 1fr; gap: 16px; align-items: start; }
+.sem-nav { position: sticky; top: 12px; }
+.sem-nav a { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; color: var(--text); border-bottom: 1px solid var(--border); }
+.sem-nav a:hover { background: var(--surface-2); text-decoration: none; }
+.sem-nav a.on { background: #eef3fd; border-left: 3px solid var(--accent); padding-left: 11px; }
+.sem-help { padding: 10px 14px; line-height: 1.5; }
+.sem-help code { word-break: break-all; }
+.sem-fields td { padding: 5px 10px 5px 0; vertical-align: top; }
+.sem-fields td:first-child { white-space: nowrap; width: 1%; }
+.sem-code { background: #f6f8fb; border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.45; overflow-x: auto; white-space: pre; margin: 8px 0; }
+.sem-code.sql { max-height: 320px; }
+.sem-result { margin-top: 10px; overflow-x: auto; }
+.sem-result table { font-size: 12.5px; }
+@media (max-width: 900px) { .sem-layout { grid-template-columns: 1fr; } .sem-nav { position: static; } }

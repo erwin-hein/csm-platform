@@ -367,6 +367,21 @@ CREATE TABLE opportunity_line_items (
 - **Won → engagement bridge** (bridged, never merged, like action items → deliverables): `engagements.opportunity_id` links an engagement to the won opportunity it delivers; one opportunity can have several. `engagements:manage` creates an engagement from a won opportunity (client, name and type prefilled from the first product that is delivered as an engagement type) or links an existing one on the same client. **A Closed Won opportunity with no linked engagement is flagged** on the pipeline, the forecast and (for `engagements:manage`) the portfolio until one exists — a handoff that hasn't happened.
 - **Events**: every opportunity, line-item and product change emits an event with before/after values (`opportunity_created`, `opportunity_stage_changed`, `opportunity_updated`, `opportunity_line_item_added/updated/removed`, `product_created/updated`, `engagement_opportunity_linked`).
 
+### Semantic layer (Malloy)
+
+A read-only Malloy model over the same Postgres, kept ready for the dashboarding tool the company is standardising on (not chosen yet, so nothing consumes the model except an admin page). It sits beside the app, never in its write path, and takes the analytics role §4 had given Omni.
+
+- **Where it lives.** `analytics/models/csm.malloy` is the model: 12 sources (clients, engagements, deliverables, work units, stages, team memberships, opportunities, line items, products, users, events) with joins, measures, doc strings (`#"`), and named views. `analytics/compile.mjs` compiles it against the live database, runs every view once, and writes `analytics/build/csm.model.json`, which is committed. Node is only needed to compile; the app reads the JSON.
+- **Derived values are queryable, through SQL twins.** Values the app derives in Python are exposed as views in a separate `semantic` schema, which the model reads like tables:
+  - `semantic.deliverable_facts`: `dep_state`, the display signal, needs-attention, overdue.
+  - `semantic.work_units`: the units progress is measured in, with tile counts expanded, so a 99-tile dashboard is 99 units.
+  - `semantic.engagement_stages`: the derived stage states.
+  - `semantic.opportunity_facts`: the amount, effective probability and forecast category, weighted amount, and the won-without-engagement flag.
+
+  Python stays authoritative. Tests compare every view with the Python derivation on the full demo data, and compare a Malloy view with the app's own pipeline board, so the model can't disagree with the app. A later migration that changes a column these views read must drop and recreate them.
+- **Access.** Reading the model is admin-only for now: an admin page (`/admin/semantic`) browses sources, fields and views, shows each view's Malloy and compiled SQL, and runs a view. It only runs SQL from the compiled model, never user input, inside a rolled-back savepoint with a timeout and a row cap. Anything exposed beyond admins later decides visibility in the app, the same rule as everywhere else, and passes it to the query. A dedicated read-only database role is the right credential for a future external tool.
+- **Freshness.** CI compiles the model against the migrated schema and fails if the committed build is out of date; a test also fails when the `.malloy` file changed without a recompile.
+
 ### Meetings & action items
 
 ```sql
@@ -756,7 +771,8 @@ The reference tool's one-invariant-per-file convention (filename = the pinned co
 | Item | Reasoning | Revisit when |
 |---|---|---|
 | Auto-discovery of new Clients/Engagements from sync (confirm/exclude queue) | Manual creation + the unassigned-meetings backfill screen cover v1 needs without the added complexity of a confirm/candidate lifecycle. | Friction of manual entry is actually felt at scale. |
-| BigQuery / Omni analytics integration | Wrong tool for the OLTP write path; a downstream sink fed from Postgres is the right shape, not needed for v1. | Cross-org/leadership reporting needs grow past what the app's own views cover. |
+| BigQuery analytics sink | Wrong tool for the OLTP write path; a downstream sink fed from Postgres is the right shape, not needed for v1. The analytics role Omni was pencilled in for now goes to the Malloy semantic layer (§3), which reads Postgres directly. | Data volume or cross-org reporting outgrows querying Postgres directly. |
+| Dashboards on the semantic layer | The Malloy model is built and kept ready, but the dashboarding tool the company will use on top of it isn't chosen or announced yet (Malloy Publisher was ruled out). | The tool and its instructions arrive; the first surface is internal analytics. |
 | Per-user/per-workspace Claude API keys | Ops/Finance haven't decided how they want AI spend billed; a single org key + per-user `llm_usage` log keeps the decision reversible without any rework. | Finance wants true chargeback, or per-team budget ceilings. |
 | Managed auth-as-a-service (e.g. WorkOS) | Hand-rolled Google OAuth is faster to ship for the internal-only MVP. | If/when the external-auth build turns out heavier than expected, worth revisiting. |
 | Granular per-field portal visibility toggles (à la the reference tool's `client_portal_visibility`) | Portal ships Deliverables-only for now; that's speculative flexibility with no demand behind it yet. | A specific engagement needs to expose something beyond deliverables. |
@@ -776,13 +792,7 @@ Items raised during the post-PoC iterations (concurrent stages, the portal slice
 
 The CRM slice and module-based access (raised 2026-09-25) were resolved the same day and folded into §2/§3 — see §6.
 
-**Open (raised 2026-09-28): Malloy as a semantic layer, and dashboards on top of it.** A loose requirement to explore, not yet a decision. Proposal under discussion:
-- **Read-only, beside the app, never in the write path.** A Malloy model over the same Postgres (a read-only role, later a replica), served by Malloy Publisher as a private service. It never replaces the service layer, and it relates to the deferred analytics row in §4: a lighter version of it, without a warehouse.
-- **Stored facts only; derived logic stays single-sourced.** The model covers what's stored (line-item amounts, pipeline by stage/product, deliverable counts by status, event-based throughput). Derived states (`dep_state`, stage states, progress with bulk counts, the forecast rules) stay in Python unless they move into SQL views both sides read. A test compares Malloy's numbers with the services' on seed data, so the two can't disagree.
-- **The app decides access; Malloy only applies it.** Publisher is unauthenticated by design, so it's never reachable from a browser. FastAPI calls it server-side and passes the viewer's scope (visible engagement ids, portal scope) as givens, with `#(access_filter)` as defence in depth. Givens are still experimental in Malloy, which matters most for the portal.
-- **Rendering.** `<malloy-render>` is a web component and works with the server-rendered + htmx frontend (§2 row 12). The Publisher React SDK and HTML data apps would be a per-page exception.
-- **Suggested order.** (1) the model and the drift test; (2) an internal analytics page for `manage` roles, where no row-level filtering is needed; (3) only then a client-facing project overview in the portal, with portal scope-isolation tests.
-- **Still to decide:** what's driving it (internal reporting, client-facing, company direction); how it relates to Omni, which §4 names for this role; which surface comes first.
+Malloy as a semantic layer (raised 2026-09-28) was resolved the same day and folded into §3/§4 — see §6. **None open.**
 
 ---
 
@@ -833,3 +843,9 @@ Dated entries for traceability — why something is the way it is, in case it's 
   - **Opportunities.** Separate from engagements, on the same Clients (prospects are just clients). Products (fixed bid, T&M, retainer) as line items, at least one per deal, and the amount is always their sum. Erwin's calls: reps read all pipeline and edit their own, sales leads edit and reassign any (the use/manage split); quotas later; USD only; add a won → engagement bridge **and flag won deals with no linked engagement**; keep stage rules minimal for now (only Closed Lost needs a reason); the stage list is a placeholder (Prospecting → Negotiation, Closed Won/Lost with Salesforce-style probabilities), easy to change before real data goes in.
   - **Boards.** A pipeline board with stage columns, the one deliberate exception to the card boards, since a sales stage is linear. A forecast board by period, owner and forecast category, raw and weighted, with movement read from the events spine rather than snapshot tables.
 - **Schema explorer as a PoC demo aid (2026-09-25)**, at Erwin's request, since the schema is where most of the design went and what future iterations keep. An admin-only interactive diagram (`/admin/schema`) built from two sources, so it can't go stale: the live database (tables, keys, constraints, triggers, row counts) and this document's §3 (sections, SQL comments, and the tables designed but not built). It also shows where the two disagree. A test fails if a table exists in the database without being described in §3, which turns "this file is the source of truth" into a check rather than a convention. Not a product feature; removable with the demo.
+- **Malloy semantic layer built; dashboards wait for the tool (2026-09-28)**, at Erwin's direction:
+  - **Why.** Using Malloy is company direction. In this role it replaces Omni, which makes things simpler and lighter.
+  - **What was built.** The model and an admin page to navigate and check it. There's no Malloy Publisher: the dashboarding tool the company means to use isn't known yet (possibly unannounced), so nothing that depends on it was built.
+  - **Derived states.** Erwin asked whether keeping them in Python meant they couldn't be queried. The answer taken: expose them as SQL-view twins in a `semantic` schema, with tests pinning each view to the Python logic. They're queryable, and there's still one definition of truth.
+  - **Kept out of the app's runtime.** Node compiles the model to a committed JSON file, so the app itself stays Python-only.
+  - **First audience.** Internal (admins) is enough for now.

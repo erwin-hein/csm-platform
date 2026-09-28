@@ -1,0 +1,1379 @@
+{
+  "model": "analytics/models/csm.malloy",
+  "model_sha256": "94e378ecc0e572a0002038286a04ad9bfdad3f62db19b1b8ce88e9e74640d674",
+  "model_doc": "The CSM platform's semantic model (CLAUDE.md §3 Semantic layer). Read-only. Reads the app's Postgres tables plus the `semantic` views, which are the SQL twins of values the app derives in Python (dependency state, progress units, stage states, deal amounts). Tests pin those views to the Python logic, so numbers here always match the app.",
+  "malloy_version": "0.0.434",
+  "sources": [
+    {
+      "name": "users",
+      "doc": "Internal staff and client users. Access roles live elsewhere; this is who someone is.",
+      "fields": [
+        {
+          "name": "id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "user_name",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "user_type",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "is_admin",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "is_contractor",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "status",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "created_at",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "is_internal",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": "True for Shearwater staff, false for client users ('client_external')."
+        },
+        {
+          "name": "user_count",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "name": "clients",
+      "doc": "A stable organisation: a client or a prospect (a prospect has opportunities but no engagement yet).",
+      "fields": [
+        {
+          "name": "id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "slug",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "created_at",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "client_name",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "client_count",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "domains",
+          "kind": "dimension",
+          "type": "array",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "name": "engagement_types",
+      "doc": "An engagement type (QuickStart, Migration): its stage vocabulary and deliverable kinds live in the app.",
+      "fields": [
+        {
+          "name": "key",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "storage_mode",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "stage_vocab",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "stage_kind",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "type_name",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "name": "work_units",
+      "doc": "A unit of leaf-level work, which is what progress is measured in: each listed leaf deliverable counts once, and children tracked by count on a bulk-count parent count once each (a 99-tile dashboard is 99 units). Matches the app's progress bars exactly.",
+      "fields": [
+        {
+          "name": "deliverable_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "engagement_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "client_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "kind",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "pipeline_status",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "source",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "units",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "is_done",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": "'listed' (a real deliverable row) or 'counted' (a child tracked only by count)."
+        },
+        {
+          "name": "total_units",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "done_units",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "progress",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Share of work units that are done, 0–1."
+        }
+      ]
+    },
+    {
+      "name": "engagement_stages",
+      "doc": "Per engagement and stage, the derived stage state: done, active, upcoming or empty. Several stages can be active at once on types whose stages follow their phases.",
+      "fields": [
+        {
+          "name": "engagement_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "client_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "type_key",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "position",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "stage_key",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "stage_label",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "derived",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "state",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "linked_count",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "stage_rows",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "active_stages",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Stages currently active; can be more than one per engagement."
+        }
+      ]
+    },
+    {
+      "name": "engagements",
+      "doc": "A typed, time-bound unit of work for a client.",
+      "fields": [
+        {
+          "name": "id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "client_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "type_key",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "stage",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "status",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "started_at",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "ended_at",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "created_at",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "opportunity_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "engagement_name",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "is_open",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "running_days",
+          "kind": "dimension",
+          "type": "number",
+          "doc": "Days since the engagement started."
+        },
+        {
+          "name": "engagement_count",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "open_engagements",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Active or paused."
+        },
+        {
+          "name": "clients",
+          "kind": "join",
+          "type": "source",
+          "doc": "A stable organisation: a client or a prospect (a prospect has opportunities but no engagement yet).",
+          "source": "clients",
+          "join": "one"
+        },
+        {
+          "name": "engagement_types",
+          "kind": "join",
+          "type": "source",
+          "doc": "An engagement type (QuickStart, Migration): its stage vocabulary and deliverable kinds live in the app.",
+          "source": "engagement_types",
+          "join": "one"
+        },
+        {
+          "name": "work_units",
+          "kind": "join",
+          "type": "source",
+          "doc": "A unit of leaf-level work, which is what progress is measured in: each listed leaf deliverable counts once, and children tracked by count on a bulk-count parent count once each (a 99-tile dashboard is 99 units). Matches the app's progress bars exactly.",
+          "source": "work_units",
+          "join": "many"
+        },
+        {
+          "name": "engagement_stages",
+          "kind": "join",
+          "type": "source",
+          "doc": "Per engagement and stage, the derived stage state: done, active, upcoming or empty. Several stages can be active at once on types whose stages follow their phases.",
+          "source": "engagement_stages",
+          "join": "many"
+        },
+        {
+          "name": "portfolio",
+          "kind": "view",
+          "type": "view",
+          "doc": "Every open engagement with its progress and how long it's been running."
+        },
+        {
+          "name": "by_type",
+          "kind": "view",
+          "type": "view",
+          "doc": "Open engagements per type and status."
+        },
+        {
+          "name": "active_stage_mix",
+          "kind": "view",
+          "type": "view",
+          "doc": "Which stages are active right now, across every open engagement."
+        }
+      ]
+    },
+    {
+      "name": "deliverables",
+      "doc": "A tracked unit of work on an engagement (phase, milestone, dashboard, tile, curriculum module), with its derived dependency state. Internal notes and client threads aren't modelled here.",
+      "fields": [
+        {
+          "name": "deliverable_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "engagement_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "client_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "engagement_type_key",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "parent_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "kind",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "kind_label",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "name",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "pipeline_status",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "blocked",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "blocked_reason",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "not_applicable",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "internal_assignee_user_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "client_owner_user_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "priority",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "target_date",
+          "kind": "dimension",
+          "type": "date",
+          "doc": ""
+        },
+        {
+          "name": "hours_estimated",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "stage_key",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "client_visible",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "created_at",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "is_finished",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "blocker_count",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "open_blocker_count",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "dep_state",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "dep_signal",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "needs_attention",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "is_overdue",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "listed_children",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "counted_children",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "counted_done",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "is_work_unit",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "dependency",
+          "kind": "dimension",
+          "type": "string",
+          "doc": "blocked · maybe_unblocked · waiting · clear, from the manual flag plus blocker edges."
+        },
+        {
+          "name": "deliverable_count",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "done_count",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "blocked_count",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Flagged blocked, with something still unfinished (or nothing) to wait on."
+        },
+        {
+          "name": "attention_count",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Needs someone to act: a block flag, a stale block flag, or started work held up by a dependency. Not ordinary sequencing."
+        },
+        {
+          "name": "overdue_count",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Past its target date and not finished."
+        },
+        {
+          "name": "estimated_hours",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Sum of estimated hours."
+        },
+        {
+          "name": "engagements",
+          "kind": "join",
+          "type": "source",
+          "doc": "A typed, time-bound unit of work for a client.",
+          "source": "engagements",
+          "join": "one"
+        },
+        {
+          "name": "clients",
+          "kind": "join",
+          "type": "source",
+          "doc": "A stable organisation: a client or a prospect (a prospect has opportunities but no engagement yet).",
+          "source": "clients",
+          "join": "one"
+        },
+        {
+          "name": "assignee",
+          "kind": "join",
+          "type": "source",
+          "doc": "Internal staff and client users. Access roles live elsewhere; this is who someone is.",
+          "source": "users",
+          "join": "one"
+        },
+        {
+          "name": "needs_attention_list",
+          "kind": "view",
+          "type": "view",
+          "doc": "Everything that needs someone's attention: flagged blocks, stale block flags, and started work held up by a dependency."
+        },
+        {
+          "name": "overdue_by_assignee",
+          "kind": "view",
+          "type": "view",
+          "doc": "Open, overdue deliverables by assignee."
+        },
+        {
+          "name": "status_mix",
+          "kind": "view",
+          "type": "view",
+          "doc": "How many deliverables sit in each pipeline status, per kind."
+        }
+      ]
+    },
+    {
+      "name": "memberships",
+      "doc": "Who is on which engagement, and in what role (owner, collaborator, viewer).",
+      "fields": [
+        {
+          "name": "engagement_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "user_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "role",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "viewer_scope",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "assignments",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Engagement memberships, any role."
+        },
+        {
+          "name": "owned",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Engagements the person owns (the single owner membership)."
+        },
+        {
+          "name": "users",
+          "kind": "join",
+          "type": "source",
+          "doc": "Internal staff and client users. Access roles live elsewhere; this is who someone is.",
+          "source": "users",
+          "join": "one"
+        },
+        {
+          "name": "engagements",
+          "kind": "join",
+          "type": "source",
+          "doc": "A typed, time-bound unit of work for a client.",
+          "source": "engagements",
+          "join": "one"
+        },
+        {
+          "name": "team_load",
+          "kind": "view",
+          "type": "view",
+          "doc": "Internal people's open assignments, by role."
+        }
+      ]
+    },
+    {
+      "name": "products",
+      "doc": "What opportunities are made of: fixed bid, time & materials, or retainer.",
+      "fields": [
+        {
+          "name": "id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "pricing_model",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "default_unit_price",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "engagement_type_key",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "active",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "created_at",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "product_name",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "name": "line_items",
+      "doc": "One product on an opportunity: quantity × its own unit price.",
+      "fields": [
+        {
+          "name": "id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "opportunity_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "product_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "quantity",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "unit_price",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "description",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "created_at",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "line_total",
+          "kind": "dimension",
+          "type": "number",
+          "doc": "Quantity × unit price."
+        },
+        {
+          "name": "line_amount",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Sum of line totals."
+        },
+        {
+          "name": "products",
+          "kind": "join",
+          "type": "source",
+          "doc": "What opportunities are made of: fixed bid, time & materials, or retainer.",
+          "source": "products",
+          "join": "one"
+        }
+      ]
+    },
+    {
+      "name": "opportunities",
+      "doc": "A deal on a client, with its amount (always the sum of its line items), effective probability and forecast category (the stage's defaults unless overridden while open), and weighted amount.",
+      "fields": [
+        {
+          "name": "opportunity_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "client_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "name",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "owner_user_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "stage_key",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "stage_label",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "stage_order",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "is_closed",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "is_won",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "is_lost",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "close_date",
+          "kind": "dimension",
+          "type": "date",
+          "doc": ""
+        },
+        {
+          "name": "closed_at",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "created_at",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "next_step",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "lost_reason",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "amount",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "line_items",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "effective_probability",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "effective_forecast_category",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "weighted_amount",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "is_overdue",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "won_without_engagement",
+          "kind": "dimension",
+          "type": "boolean",
+          "doc": ""
+        },
+        {
+          "name": "deal_source",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "close_quarter",
+          "kind": "dimension",
+          "type": "date",
+          "doc": "The quarter the deal closes (or closed) in, for forecasting."
+        },
+        {
+          "name": "close_month",
+          "kind": "dimension",
+          "type": "date",
+          "doc": ""
+        },
+        {
+          "name": "deal_count",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "total_amount",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Sum of deal amounts, open and closed."
+        },
+        {
+          "name": "open_pipeline",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Amount still in play: every open deal, at face value."
+        },
+        {
+          "name": "weighted_pipeline",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Open deals weighted by their effective probability."
+        },
+        {
+          "name": "won_amount",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Amount on Closed Won deals."
+        },
+        {
+          "name": "lost_amount",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Amount on Closed Lost deals."
+        },
+        {
+          "name": "won_deals",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "closed_deals",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "win_rate",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Won ÷ closed, by count of deals, 0–1."
+        },
+        {
+          "name": "average_deal",
+          "kind": "measure",
+          "type": "number",
+          "doc": "Mean deal amount."
+        },
+        {
+          "name": "clients",
+          "kind": "join",
+          "type": "source",
+          "doc": "A stable organisation: a client or a prospect (a prospect has opportunities but no engagement yet).",
+          "source": "clients",
+          "join": "one"
+        },
+        {
+          "name": "owner",
+          "kind": "join",
+          "type": "source",
+          "doc": "Internal staff and client users. Access roles live elsewhere; this is who someone is.",
+          "source": "users",
+          "join": "one"
+        },
+        {
+          "name": "items",
+          "kind": "join",
+          "type": "source",
+          "doc": "One product on an opportunity: quantity × its own unit price.",
+          "source": "line_items",
+          "join": "many"
+        },
+        {
+          "name": "pipeline_by_stage",
+          "kind": "view",
+          "type": "view",
+          "doc": "Open pipeline per stage, in pipeline order."
+        },
+        {
+          "name": "forecast_by_quarter",
+          "kind": "view",
+          "type": "view",
+          "doc": "Per close quarter: won, commit, best case and open pipeline, raw and weighted."
+        },
+        {
+          "name": "win_rate_by_owner",
+          "kind": "view",
+          "type": "view",
+          "doc": "Win rate and totals per owner."
+        },
+        {
+          "name": "by_source",
+          "kind": "view",
+          "type": "view",
+          "doc": "Where deals come from, and how they convert."
+        },
+        {
+          "name": "revenue_by_product",
+          "kind": "view",
+          "type": "view",
+          "doc": "Revenue by product, split into won and still open."
+        },
+        {
+          "name": "won_without_engagement_list",
+          "kind": "view",
+          "type": "view",
+          "doc": "Won deals that no engagement delivers yet: handoffs that haven't happened."
+        }
+      ]
+    },
+    {
+      "name": "events",
+      "doc": "Every write the app has made, append-only. Useful for activity and throughput over time.",
+      "fields": [
+        {
+          "name": "id",
+          "kind": "dimension",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "occurred_at",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "entity_type",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "entity_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "event_type",
+          "kind": "dimension",
+          "type": "string",
+          "doc": ""
+        },
+        {
+          "name": "actor_user_id",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "payload",
+          "kind": "dimension",
+          "type": "sql native",
+          "doc": ""
+        },
+        {
+          "name": "event_week",
+          "kind": "dimension",
+          "type": "timestamptz",
+          "doc": ""
+        },
+        {
+          "name": "event_count",
+          "kind": "measure",
+          "type": "number",
+          "doc": ""
+        },
+        {
+          "name": "actor",
+          "kind": "join",
+          "type": "source",
+          "doc": "Internal staff and client users. Access roles live elsewhere; this is who someone is.",
+          "source": "users",
+          "join": "one"
+        },
+        {
+          "name": "weekly_activity",
+          "kind": "view",
+          "type": "view",
+          "doc": "Writes per week, by what was written."
+        },
+        {
+          "name": "completions_per_week",
+          "kind": "view",
+          "type": "view",
+          "doc": "Deliverables completed per week."
+        },
+        {
+          "name": "most_active",
+          "kind": "view",
+          "type": "view",
+          "doc": "Who's writing the most."
+        }
+      ]
+    }
+  ],
+  "views": [
+    {
+      "source": "engagements",
+      "name": "portfolio",
+      "doc": "Every open engagement with its progress and how long it's been running.",
+      "query": "run: engagements -> portfolio",
+      "malloy": "view: portfolio is {\n    where: is_open\n    group_by: clients.client_name, engagement_name, engagement_types.type_name, status, running_days\n    aggregate: work_units.done_units, work_units.total_units, work_units.progress\n    order_by: client_name, engagement_name\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     clients_0.\"name\" as \"client_name\",\n     base.\"name\" as \"engagement_name\",\n     engagement_types_0.\"display_name\" as \"type_name\",\n     base.\"status\" as \"status\",\n     FLOOR((EXTRACT(EPOCH FROM LOCALTIMESTAMP)-EXTRACT(EPOCH FROM base.\"started_at\"))/86400.0) as \"running_days\",\n     COALESCE(SUM(CASE WHEN work_units_0.\"pipeline_status\"='done' THEN work_units_0.\"units\" END),0) as \"done_units\",\n     COALESCE(SUM(work_units_0.\"units\"),0) as \"total_units\",\n     (COALESCE(SUM(CASE WHEN work_units_0.\"pipeline_status\"='done' THEN work_units_0.\"units\" END),0))*1.0/(NULLIF(COALESCE(SUM(work_units_0.\"units\"),0),0)) as \"progress\"\n  FROM public.engagements as base\n   LEFT JOIN public.clients AS clients_0\n    ON clients_0.\"id\"=base.\"client_id\"\n   LEFT JOIN public.engagement_types AS engagement_types_0\n    ON engagement_types_0.\"key\"=base.\"type_key\"\n   LEFT JOIN semantic.work_units AS work_units_0\n    ON work_units_0.\"engagement_id\"=base.\"id\"\n  WHERE ((base.\"status\"='active') or (base.\"status\"='paused'))\n  GROUP BY 1,2,3,4,5\n  ORDER BY 1 ASC NULLS LAST,2 ASC NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "engagements",
+      "name": "by_type",
+      "doc": "Open engagements per type and status.",
+      "query": "run: engagements -> by_type",
+      "malloy": "view: by_type is {\n    group_by: engagement_types.type_name, status\n    aggregate: engagement_count\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     engagement_types_0.\"display_name\" as \"type_name\",\n     base.\"status\" as \"status\",\n     COUNT(1) as \"engagement_count\"\n  FROM public.engagements as base\n   LEFT JOIN public.engagement_types AS engagement_types_0\n    ON engagement_types_0.\"key\"=base.\"type_key\"\n  GROUP BY 1,2\n  ORDER BY 3 desc NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "engagements",
+      "name": "active_stage_mix",
+      "doc": "Which stages are active right now, across every open engagement.",
+      "query": "run: engagements -> active_stage_mix",
+      "malloy": "view: active_stage_mix is {\n    where: is_open and engagement_stages.state = 'active'\n    group_by: engagement_types.type_name, engagement_stages.stage_label\n    aggregate: engagement_count\n    order_by: engagement_count desc\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     engagement_types_0.\"display_name\" as \"type_name\",\n     engagement_stages_0.\"stage_label\" as \"stage_label\",\n     COUNT(DISTINCT base.\"id\") as \"engagement_count\"\n  FROM public.engagements as base\n   LEFT JOIN semantic.engagement_stages AS engagement_stages_0\n    ON engagement_stages_0.\"engagement_id\"=base.\"id\"\n   LEFT JOIN public.engagement_types AS engagement_types_0\n    ON engagement_types_0.\"key\"=base.\"type_key\"\n  WHERE ((base.\"status\"='active') or (base.\"status\"='paused')) and (engagement_stages_0.\"state\"='active')\n  GROUP BY 1,2\n  ORDER BY 3 desc NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "deliverables",
+      "name": "needs_attention_list",
+      "doc": "Everything that needs someone's attention: flagged blocks, stale block flags, and started work held up by a dependency.",
+      "query": "run: deliverables -> needs_attention_list",
+      "malloy": "view: needs_attention_list is {\n    where: needs_attention and engagements.is_open\n    group_by: clients.client_name, engagements.engagement_name, kind_label, name, pipeline_status, dep_state, blocked_reason\n    order_by: client_name\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     clients_0.\"name\" as \"client_name\",\n     engagements_0.\"name\" as \"engagement_name\",\n     base.\"kind_label\" as \"kind_label\",\n     base.\"name\" as \"name\",\n     base.\"pipeline_status\" as \"pipeline_status\",\n     base.\"dep_state\" as \"dep_state\",\n     base.\"blocked_reason\" as \"blocked_reason\"\n  FROM semantic.deliverable_facts as base\n   LEFT JOIN public.engagements AS engagements_0\n    ON engagements_0.\"id\"=base.\"engagement_id\"\n   LEFT JOIN public.clients AS clients_0\n    ON clients_0.\"id\"=base.\"client_id\"\n  WHERE base.\"needs_attention\" and ((engagements_0.\"status\"='active') or (engagements_0.\"status\"='paused'))\n  GROUP BY 1,2,3,4,5,6,7\n  ORDER BY 1 ASC NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "deliverables",
+      "name": "overdue_by_assignee",
+      "doc": "Open, overdue deliverables by assignee.",
+      "query": "run: deliverables -> overdue_by_assignee",
+      "malloy": "view: overdue_by_assignee is {\n    where: is_overdue and engagements.is_open\n    group_by: assignee.user_name\n    aggregate: overdue_count, estimated_hours\n    order_by: overdue_count desc\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     assignee_0.\"user_name\" as \"user_name\",\n     COUNT(CASE WHEN base.\"is_overdue\" THEN 1 END) as \"overdue_count\",\n     COALESCE(SUM(base.\"hours_estimated\"),0) as \"estimated_hours\"\n  FROM semantic.deliverable_facts as base\n   LEFT JOIN public.engagements AS engagements_0\n    ON engagements_0.\"id\"=base.\"engagement_id\"\n   LEFT JOIN (\n    SELECT id, display_name AS user_name, user_type::text AS user_type, is_admin, is_contractor, status, created_at\n    FROM public.users\n  ) AS assignee_0\n    ON assignee_0.\"id\"=base.\"internal_assignee_user_id\"\n  WHERE base.\"is_overdue\" and ((engagements_0.\"status\"='active') or (engagements_0.\"status\"='paused'))\n  GROUP BY 1\n  ORDER BY 2 desc NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "deliverables",
+      "name": "status_mix",
+      "doc": "How many deliverables sit in each pipeline status, per kind.",
+      "query": "run: deliverables -> status_mix",
+      "malloy": "view: status_mix is {\n    where: not not_applicable\n    group_by: kind_label, pipeline_status\n    aggregate: deliverable_count\n    order_by: kind_label\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     base.\"kind_label\" as \"kind_label\",\n     base.\"pipeline_status\" as \"pipeline_status\",\n     COUNT(1) as \"deliverable_count\"\n  FROM semantic.deliverable_facts as base\n  WHERE COALESCE(NOT base.\"not_applicable\",TRUE)\n  GROUP BY 1,2\n  ORDER BY 1 ASC NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "memberships",
+      "name": "team_load",
+      "doc": "Internal people's open assignments, by role.",
+      "query": "run: memberships -> team_load",
+      "malloy": "view: team_load is {\n    where: users.is_internal and engagements.is_open\n    group_by: users.user_name\n    aggregate: owned, assignments\n    order_by: assignments desc\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     users_0.\"user_name\" as \"user_name\",\n     COUNT(CASE WHEN base.\"role\"='owner' THEN 1 END) as \"owned\",\n     COUNT(1) as \"assignments\"\n  FROM (\n    SELECT engagement_id, user_id, role::text AS role, viewer_scope FROM public.engagement_memberships\n  ) as base\n   LEFT JOIN (\n    SELECT id, display_name AS user_name, user_type::text AS user_type, is_admin, is_contractor, status, created_at\n    FROM public.users\n  ) AS users_0\n    ON users_0.\"id\"=base.\"user_id\"\n   LEFT JOIN public.engagements AS engagements_0\n    ON engagements_0.\"id\"=base.\"engagement_id\"\n  WHERE (users_0.\"user_type\"='internal') and ((engagements_0.\"status\"='active') or (engagements_0.\"status\"='paused'))\n  GROUP BY 1\n  ORDER BY 3 desc NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "opportunities",
+      "name": "pipeline_by_stage",
+      "doc": "Open pipeline per stage, in pipeline order.",
+      "query": "run: opportunities -> pipeline_by_stage",
+      "malloy": "view: pipeline_by_stage is {\n    where: not is_closed\n    group_by: stage_label, stage_order\n    aggregate: deal_count, open_pipeline, weighted_pipeline\n    order_by: stage_order\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     base.\"stage_label\" as \"stage_label\",\n     base.\"stage_order\" as \"stage_order\",\n     COUNT(1) as \"deal_count\",\n     COALESCE(SUM(CASE WHEN COALESCE(NOT base.\"is_closed\",TRUE) THEN base.\"amount\" END),0) as \"open_pipeline\",\n     COALESCE(SUM(CASE WHEN COALESCE(NOT base.\"is_closed\",TRUE) THEN base.\"weighted_amount\" END),0) as \"weighted_pipeline\"\n  FROM semantic.opportunity_facts as base\n  WHERE COALESCE(NOT base.\"is_closed\",TRUE)\n  GROUP BY 1,2\n  ORDER BY 2 ASC NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "opportunities",
+      "name": "forecast_by_quarter",
+      "doc": "Per close quarter: won, commit, best case and open pipeline, raw and weighted.",
+      "query": "run: opportunities -> forecast_by_quarter",
+      "malloy": "view: forecast_by_quarter is {\n    group_by: close_quarter\n    aggregate:\n      won_amount\n      commit_amount is amount.sum() { where: not is_closed and effective_forecast_category = 'commit' }\n      best_case_amount is amount.sum() { where: not is_closed and effective_forecast_category = 'best_case' }\n      open_pipeline\n      weighted_pipeline\n    order_by: close_quarter\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     DATE_TRUNC('quarter', base.\"close_date\") as \"close_quarter\",\n     COALESCE(SUM(CASE WHEN base.\"is_won\" THEN base.\"amount\" END),0) as \"won_amount\",\n     COALESCE(SUM(CASE WHEN COALESCE(NOT base.\"is_closed\",TRUE) and (base.\"effective_forecast_category\"='commit') THEN base.\"amount\" END),0) as \"commit_amount\",\n     COALESCE(SUM(CASE WHEN COALESCE(NOT base.\"is_closed\",TRUE) and (base.\"effective_forecast_category\"='best_case') THEN base.\"amount\" END),0) as \"best_case_amount\",\n     COALESCE(SUM(CASE WHEN COALESCE(NOT base.\"is_closed\",TRUE) THEN base.\"amount\" END),0) as \"open_pipeline\",\n     COALESCE(SUM(CASE WHEN COALESCE(NOT base.\"is_closed\",TRUE) THEN base.\"weighted_amount\" END),0) as \"weighted_pipeline\"\n  FROM semantic.opportunity_facts as base\n  GROUP BY 1\n  ORDER BY 1 ASC NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "opportunities",
+      "name": "win_rate_by_owner",
+      "doc": "Win rate and totals per owner.",
+      "query": "run: opportunities -> win_rate_by_owner",
+      "malloy": "view: win_rate_by_owner is {\n    group_by: owner.user_name\n    aggregate: deal_count, won_deals, closed_deals, win_rate, won_amount, open_pipeline\n    order_by: won_amount desc\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     owner_0.\"user_name\" as \"user_name\",\n     COUNT(1) as \"deal_count\",\n     COUNT(CASE WHEN base.\"is_won\" THEN 1 END) as \"won_deals\",\n     COUNT(CASE WHEN base.\"is_closed\" THEN 1 END) as \"closed_deals\",\n     (COUNT(CASE WHEN base.\"is_won\" THEN 1 END))*1.0/(NULLIF((COUNT(CASE WHEN base.\"is_closed\" THEN 1 END)),0)) as \"win_rate\",\n     COALESCE(SUM(CASE WHEN base.\"is_won\" THEN base.\"amount\" END),0) as \"won_amount\",\n     COALESCE(SUM(CASE WHEN COALESCE(NOT base.\"is_closed\",TRUE) THEN base.\"amount\" END),0) as \"open_pipeline\"\n  FROM semantic.opportunity_facts as base\n   LEFT JOIN (\n    SELECT id, display_name AS user_name, user_type::text AS user_type, is_admin, is_contractor, status, created_at\n    FROM public.users\n  ) AS owner_0\n    ON owner_0.\"id\"=base.\"owner_user_id\"\n  GROUP BY 1\n  ORDER BY 6 desc NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "opportunities",
+      "name": "by_source",
+      "doc": "Where deals come from, and how they convert.",
+      "query": "run: opportunities -> by_source",
+      "malloy": "view: by_source is {\n    group_by: deal_source\n    aggregate: deal_count, won_deals, win_rate, total_amount\n    order_by: total_amount desc\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     base.\"source\" as \"deal_source\",\n     COUNT(1) as \"deal_count\",\n     COUNT(CASE WHEN base.\"is_won\" THEN 1 END) as \"won_deals\",\n     (COUNT(CASE WHEN base.\"is_won\" THEN 1 END))*1.0/(NULLIF((COUNT(CASE WHEN base.\"is_closed\" THEN 1 END)),0)) as \"win_rate\",\n     COALESCE(SUM(base.\"amount\"),0) as \"total_amount\"\n  FROM semantic.opportunity_facts as base\n  GROUP BY 1\n  ORDER BY 5 desc NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "opportunities",
+      "name": "revenue_by_product",
+      "doc": "Revenue by product, split into won and still open.",
+      "query": "run: opportunities -> revenue_by_product",
+      "malloy": "view: revenue_by_product is {\n    group_by: items.products.product_name, items.products.pricing_model\n    aggregate:\n      won_product_amount is items.line_amount { where: is_won }\n      open_product_amount is items.line_amount { where: not is_closed }\n    order_by: won_product_amount desc\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     products_0.\"name\" as \"product_name\",\n     products_0.\"pricing_model\" as \"pricing_model\",\n     (COALESCE(SUM(CASE WHEN base.\"is_won\" THEN (items_0.\"quantity\"*items_0.\"unit_price\") END),0)) as \"won_product_amount\",\n     (COALESCE(SUM(CASE WHEN COALESCE(NOT base.\"is_closed\",TRUE) THEN (items_0.\"quantity\"*items_0.\"unit_price\") END),0)) as \"open_product_amount\"\n  FROM semantic.opportunity_facts as base\n   LEFT JOIN public.opportunity_line_items AS items_0\n    ON items_0.\"opportunity_id\"=base.\"opportunity_id\"\n   LEFT JOIN public.products AS products_0\n    ON products_0.\"id\"=items_0.\"product_id\"\n  GROUP BY 1,2\n  ORDER BY 3 desc NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "opportunities",
+      "name": "won_without_engagement_list",
+      "doc": "Won deals that no engagement delivers yet: handoffs that haven't happened.",
+      "query": "run: opportunities -> won_without_engagement_list",
+      "malloy": "view: won_without_engagement_list is {\n    where: won_without_engagement\n    group_by: clients.client_name, name, close_date, owner.user_name\n    aggregate: total_amount\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     clients_0.\"name\" as \"client_name\",\n     base.\"name\" as \"name\",\n     base.\"close_date\" as \"close_date\",\n     owner_0.\"user_name\" as \"user_name\",\n     COALESCE(SUM(base.\"amount\"),0) as \"total_amount\"\n  FROM semantic.opportunity_facts as base\n   LEFT JOIN public.clients AS clients_0\n    ON clients_0.\"id\"=base.\"client_id\"\n   LEFT JOIN (\n    SELECT id, display_name AS user_name, user_type::text AS user_type, is_admin, is_contractor, status, created_at\n    FROM public.users\n  ) AS owner_0\n    ON owner_0.\"id\"=base.\"owner_user_id\"\n  WHERE base.\"won_without_engagement\"\n  GROUP BY 1,2,3,4\n  ORDER BY 3 desc NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "events",
+      "name": "weekly_activity",
+      "doc": "Writes per week, by what was written.",
+      "query": "run: events -> weekly_activity",
+      "malloy": "view: weekly_activity is {\n    group_by: event_week, entity_type\n    aggregate: event_count\n    order_by: event_week desc\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     (DATE_TRUNC('week', (base.\"occurred_at\" + INTERVAL '1' DAY)) - INTERVAL '1' DAY) as \"event_week\",\n     base.\"entity_type\" as \"entity_type\",\n     COUNT(1) as \"event_count\"\n  FROM public.events as base\n  GROUP BY 1,2\n  ORDER BY 1 desc NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "events",
+      "name": "completions_per_week",
+      "doc": "Deliverables completed per week.",
+      "query": "run: events -> completions_per_week",
+      "malloy": "view: completions_per_week is {\n    where: event_type = 'deliverable_completed'\n    group_by: event_week\n    aggregate: event_count\n    order_by: event_week desc\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     (DATE_TRUNC('week', (base.\"occurred_at\" + INTERVAL '1' DAY)) - INTERVAL '1' DAY) as \"event_week\",\n     COUNT(1) as \"event_count\"\n  FROM public.events as base\n  WHERE base.\"event_type\"='deliverable_completed'\n  GROUP BY 1\n  ORDER BY 1 desc NULLS LAST\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    },
+    {
+      "source": "events",
+      "name": "most_active",
+      "doc": "Who's writing the most.",
+      "query": "run: events -> most_active",
+      "malloy": "view: most_active is {\n    group_by: actor.user_name\n    aggregate: event_count\n    order_by: event_count desc\n    limit: 10\n  }",
+      "sql": "WITH __stage0 AS (\n  SELECT \n     actor_0.\"user_name\" as \"user_name\",\n     COUNT(1) as \"event_count\"\n  FROM public.events as base\n   LEFT JOIN (\n    SELECT id, display_name AS user_name, user_type::text AS user_type, is_admin, is_contractor, status, created_at\n    FROM public.users\n  ) AS actor_0\n    ON actor_0.\"id\"=base.\"actor_user_id\"\n  GROUP BY 1\n  ORDER BY 2 desc NULLS LAST\n  LIMIT 10\n)\nSELECT row_to_json(finalStage) as row FROM __stage0 AS finalStage"
+    }
+  ],
+  "malloy_text": "##\" The CSM platform's semantic model (CLAUDE.md §3 Semantic layer). Read-only. Reads the app's\n##\" Postgres tables plus the `semantic` views, which are the SQL twins of values the app derives in\n##\" Python (dependency state, progress units, stage states, deal amounts). Tests pin those views to\n##\" the Python logic, so numbers here always match the app.\n\n# ---------------------------------------------------------------- people and clients\n\n#\" Internal staff and client users. Access roles live elsewhere; this is who someone is.\n# Postgres enums are cast to text here; Malloy doesn't read user-defined types directly.\nsource: users is postgres.sql(\"\"\"\n  SELECT id, display_name AS user_name, user_type::text AS user_type, is_admin, is_contractor, status, created_at\n  FROM public.users\n\"\"\") extend {\n  primary_key: id\n  #\" True for Shearwater staff, false for client users ('client_external').\n  dimension: is_internal is user_type = 'internal'\n  measure: user_count is count()\n}\n\n#\" A stable organisation: a client or a prospect (a prospect has opportunities but no engagement yet).\nsource: clients is postgres.table('public.clients') extend {\n  primary_key: id\n  rename: client_name is name\n  measure: client_count is count()\n}\n\n# ---------------------------------------------------------------- engagements\n\n#\" An engagement type (QuickStart, Migration): its stage vocabulary and deliverable kinds live in the app.\nsource: engagement_types is postgres.table('public.engagement_types') extend {\n  primary_key: key\n  rename: type_name is display_name\n}\n\n#\" A unit of leaf-level work, which is what progress is measured in: each listed leaf deliverable\n#\" counts once, and children tracked by count on a bulk-count parent count once each\n#\" (a 99-tile dashboard is 99 units). Matches the app's progress bars exactly.\nsource: work_units is postgres.table('semantic.work_units') extend {\n  #\" 'listed' (a real deliverable row) or 'counted' (a child tracked only by count).\n  dimension: is_done is pipeline_status = 'done'\n  measure:\n    total_units is units.sum()\n    done_units is units.sum() { where: pipeline_status = 'done' }\n    #\" Share of work units that are done, 0–1.\n    progress is done_units / nullif(units.sum(), 0)\n}\n\n#\" Per engagement and stage, the derived stage state: done, active, upcoming or empty. Several\n#\" stages can be active at once on types whose stages follow their phases.\nsource: engagement_stages is postgres.table('semantic.engagement_stages') extend {\n  measure:\n    stage_rows is count()\n    #\" Stages currently active; can be more than one per engagement.\n    active_stages is count() { where: state = 'active' }\n}\n\n#\" A typed, time-bound unit of work for a client.\nsource: engagements is postgres.table('public.engagements') extend {\n  primary_key: id\n  rename: engagement_name is name\n  except: slack_channel_id, internal_slack_channel_id, harvest_project_id, expected_scope, health, details\n  join_one: clients with client_id\n  join_one: engagement_types with type_key\n  join_many: work_units on work_units.engagement_id = id\n  join_many: engagement_stages on engagement_stages.engagement_id = id\n  dimension:\n    is_open is status = 'active' or status = 'paused'\n    #\" Days since the engagement started.\n    running_days is days(started_at to now)\n  measure:\n    engagement_count is count()\n    #\" Active or paused.\n    open_engagements is count() { where: is_open }\n\n  #\" Every open engagement with its progress and how long it's been running.\n  view: portfolio is {\n    where: is_open\n    group_by: clients.client_name, engagement_name, engagement_types.type_name, status, running_days\n    aggregate: work_units.done_units, work_units.total_units, work_units.progress\n    order_by: client_name, engagement_name\n  }\n\n  #\" Open engagements per type and status.\n  view: by_type is {\n    group_by: engagement_types.type_name, status\n    aggregate: engagement_count\n  }\n\n  #\" Which stages are active right now, across every open engagement.\n  view: active_stage_mix is {\n    where: is_open and engagement_stages.state = 'active'\n    group_by: engagement_types.type_name, engagement_stages.stage_label\n    aggregate: engagement_count\n    order_by: engagement_count desc\n  }\n}\n\n# ---------------------------------------------------------------- deliverables\n\n#\" A tracked unit of work on an engagement (phase, milestone, dashboard, tile, curriculum module),\n#\" with its derived dependency state. Internal notes and client threads aren't modelled here.\nsource: deliverables is postgres.table('semantic.deliverable_facts') extend {\n  primary_key: deliverable_id\n  join_one: engagements with engagement_id\n  join_one: clients with client_id\n  join_one: assignee is users with internal_assignee_user_id\n  #\" blocked · maybe_unblocked · waiting · clear, from the manual flag plus blocker edges.\n  dimension: dependency is dep_state\n  measure:\n    deliverable_count is count()\n    done_count is count() { where: pipeline_status = 'done' }\n    #\" Flagged blocked, with something still unfinished (or nothing) to wait on.\n    blocked_count is count() { where: dep_state = 'blocked' }\n    #\" Needs someone to act: a block flag, a stale block flag, or started work held up by a dependency. Not ordinary sequencing.\n    attention_count is count() { where: needs_attention }\n    #\" Past its target date and not finished.\n    overdue_count is count() { where: is_overdue }\n    #\" Sum of estimated hours.\n    estimated_hours is hours_estimated.sum()\n\n  #\" Everything that needs someone's attention: flagged blocks, stale block flags, and started work held up by a dependency.\n  view: needs_attention_list is {\n    where: needs_attention and engagements.is_open\n    group_by: clients.client_name, engagements.engagement_name, kind_label, name, pipeline_status, dep_state, blocked_reason\n    order_by: client_name\n  }\n\n  #\" Open, overdue deliverables by assignee.\n  view: overdue_by_assignee is {\n    where: is_overdue and engagements.is_open\n    group_by: assignee.user_name\n    aggregate: overdue_count, estimated_hours\n    order_by: overdue_count desc\n  }\n\n  #\" How many deliverables sit in each pipeline status, per kind.\n  view: status_mix is {\n    where: not not_applicable\n    group_by: kind_label, pipeline_status\n    aggregate: deliverable_count\n    order_by: kind_label\n  }\n}\n\n# ---------------------------------------------------------------- team\n\n#\" Who is on which engagement, and in what role (owner, collaborator, viewer).\nsource: memberships is postgres.sql(\"\"\"\n  SELECT engagement_id, user_id, role::text AS role, viewer_scope FROM public.engagement_memberships\n\"\"\") extend {\n  join_one: users with user_id\n  join_one: engagements with engagement_id\n  measure:\n    #\" Engagement memberships, any role.\n    assignments is count()\n    #\" Engagements the person owns (the single owner membership).\n    owned is count() { where: role = 'owner' }\n\n  #\" Internal people's open assignments, by role.\n  view: team_load is {\n    where: users.is_internal and engagements.is_open\n    group_by: users.user_name\n    aggregate: owned, assignments\n    order_by: assignments desc\n  }\n}\n\n# ---------------------------------------------------------------- opportunities\n\n#\" What opportunities are made of: fixed bid, time & materials, or retainer.\nsource: products is postgres.table('public.products') extend {\n  primary_key: id\n  rename: product_name is name\n}\n\n#\" One product on an opportunity: quantity × its own unit price.\nsource: line_items is postgres.table('public.opportunity_line_items') extend {\n  primary_key: id\n  join_one: products with product_id\n  #\" Quantity × unit price.\n  dimension: line_total is quantity * unit_price\n  #\" Sum of line totals.\n  measure: line_amount is line_total.sum()\n}\n\n#\" A deal on a client, with its amount (always the sum of its line items), effective probability and\n#\" forecast category (the stage's defaults unless overridden while open), and weighted amount.\nsource: opportunities is postgres.table('semantic.opportunity_facts') extend {\n  primary_key: opportunity_id\n  join_one: clients with client_id\n  join_one: owner is users with owner_user_id\n  join_many: items is line_items on items.opportunity_id = opportunity_id\n  rename: deal_source is `source`\n  dimension:\n    #\" The quarter the deal closes (or closed) in, for forecasting.\n    close_quarter is close_date.quarter\n    close_month is close_date.month\n  measure:\n    deal_count is count()\n    #\" Sum of deal amounts, open and closed.\n    total_amount is amount.sum()\n    #\" Amount still in play: every open deal, at face value.\n    open_pipeline is amount.sum() { where: not is_closed }\n    #\" Open deals weighted by their effective probability.\n    weighted_pipeline is weighted_amount.sum() { where: not is_closed }\n    #\" Amount on Closed Won deals.\n    won_amount is amount.sum() { where: is_won }\n    #\" Amount on Closed Lost deals.\n    lost_amount is amount.sum() { where: is_lost }\n    won_deals is count() { where: is_won }\n    closed_deals is count() { where: is_closed }\n    #\" Won ÷ closed, by count of deals, 0–1.\n    win_rate is won_deals / nullif(closed_deals, 0)\n    #\" Mean deal amount.\n    average_deal is amount.avg()\n\n  #\" Open pipeline per stage, in pipeline order.\n  view: pipeline_by_stage is {\n    where: not is_closed\n    group_by: stage_label, stage_order\n    aggregate: deal_count, open_pipeline, weighted_pipeline\n    order_by: stage_order\n  }\n\n  #\" Per close quarter: won, commit, best case and open pipeline, raw and weighted.\n  view: forecast_by_quarter is {\n    group_by: close_quarter\n    aggregate:\n      won_amount\n      commit_amount is amount.sum() { where: not is_closed and effective_forecast_category = 'commit' }\n      best_case_amount is amount.sum() { where: not is_closed and effective_forecast_category = 'best_case' }\n      open_pipeline\n      weighted_pipeline\n    order_by: close_quarter\n  }\n\n  #\" Win rate and totals per owner.\n  view: win_rate_by_owner is {\n    group_by: owner.user_name\n    aggregate: deal_count, won_deals, closed_deals, win_rate, won_amount, open_pipeline\n    order_by: won_amount desc\n  }\n\n  #\" Where deals come from, and how they convert.\n  view: by_source is {\n    group_by: deal_source\n    aggregate: deal_count, won_deals, win_rate, total_amount\n    order_by: total_amount desc\n  }\n\n  #\" Revenue by product, split into won and still open.\n  view: revenue_by_product is {\n    group_by: items.products.product_name, items.products.pricing_model\n    aggregate:\n      won_product_amount is items.line_amount { where: is_won }\n      open_product_amount is items.line_amount { where: not is_closed }\n    order_by: won_product_amount desc\n  }\n\n  #\" Won deals that no engagement delivers yet: handoffs that haven't happened.\n  view: won_without_engagement_list is {\n    where: won_without_engagement\n    group_by: clients.client_name, name, close_date, owner.user_name\n    aggregate: total_amount\n  }\n}\n\n# ---------------------------------------------------------------- the event spine\n\n#\" Every write the app has made, append-only. Useful for activity and throughput over time.\nsource: events is postgres.table('public.events') extend {\n  primary_key: id\n  join_one: actor is users with actor_user_id\n  dimension: event_week is occurred_at.week\n  measure: event_count is count()\n\n  #\" Writes per week, by what was written.\n  view: weekly_activity is {\n    group_by: event_week, entity_type\n    aggregate: event_count\n    order_by: event_week desc\n  }\n\n  #\" Deliverables completed per week.\n  view: completions_per_week is {\n    where: event_type = 'deliverable_completed'\n    group_by: event_week\n    aggregate: event_count\n    order_by: event_week desc\n  }\n\n  #\" Who's writing the most.\n  view: most_active is {\n    group_by: actor.user_name\n    aggregate: event_count\n    order_by: event_count desc\n    limit: 10\n  }\n}\n"
+}

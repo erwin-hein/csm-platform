@@ -20,6 +20,7 @@ the integrations, LLM features, rules engine or digests are built.
 | Seed data | `app/seed.py`. Runs through the real service functions, so seeded rows emit events too |
 | Tests | `tests/`. One invariant per file |
 | Schema explorer (PoC demo aid) | `/admin/schema`, admin only. Built from live Postgres reflection plus CLAUDE.md §3 (`app/schema_doc.py`) and the design notes in `app/schema_notes.py`; `app/web/schema.py`, `app/static/schema.{js,css}`. Removing it is deleting those files and the router line |
+| Semantic layer (Malloy) | `analytics/models/csm.malloy` over Postgres plus the `semantic` views (migration 0007, pinned to the Python logic by tests). Browse and run it at `/admin/semantic` (admin). Recompile after editing the model: `cd analytics && npm install && DATABASE_URL=... npm run compile`, then commit `analytics/build/`. Ad hoc: `npm run query -- "run: opportunities -> pipeline_by_stage"` |
 | Demo recording plan | [`docs/demo-script.md`](docs/demo-script.md) |
 | Deploy / local run / CI | `render.yaml` (Blueprint), `scripts/start.sh`, `Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml` (tests on every push; publishes the image on merge to `main`) |
 

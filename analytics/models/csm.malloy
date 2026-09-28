@@ -1,0 +1,299 @@
+##" The CSM platform's semantic model (CLAUDE.md §3 Semantic layer). Read-only. Reads the app's
+##" Postgres tables plus the `semantic` views, which are the SQL twins of values the app derives in
+##" Python (dependency state, progress units, stage states, deal amounts). Tests pin those views to
+##" the Python logic, so numbers here always match the app.
+
+# ---------------------------------------------------------------- people and clients
+
+#" Internal staff and client users. Access roles live elsewhere; this is who someone is.
+# Postgres enums are cast to text here; Malloy doesn't read user-defined types directly.
+source: users is postgres.sql("""
+  SELECT id, display_name AS user_name, user_type::text AS user_type, is_admin, is_contractor, status, created_at
+  FROM public.users
+""") extend {
+  primary_key: id
+  #" True for Shearwater staff, false for client users ('client_external').
+  dimension: is_internal is user_type = 'internal'
+  measure: user_count is count()
+}
+
+#" A stable organisation: a client or a prospect (a prospect has opportunities but no engagement yet).
+source: clients is postgres.table('public.clients') extend {
+  primary_key: id
+  rename: client_name is name
+  measure: client_count is count()
+}
+
+# ---------------------------------------------------------------- engagements
+
+#" An engagement type (QuickStart, Migration): its stage vocabulary and deliverable kinds live in the app.
+source: engagement_types is postgres.table('public.engagement_types') extend {
+  primary_key: key
+  rename: type_name is display_name
+}
+
+#" A unit of leaf-level work, which is what progress is measured in: each listed leaf deliverable
+#" counts once, and children tracked by count on a bulk-count parent count once each
+#" (a 99-tile dashboard is 99 units). Matches the app's progress bars exactly.
+source: work_units is postgres.table('semantic.work_units') extend {
+  #" 'listed' (a real deliverable row) or 'counted' (a child tracked only by count).
+  dimension: is_done is pipeline_status = 'done'
+  measure:
+    total_units is units.sum()
+    done_units is units.sum() { where: pipeline_status = 'done' }
+    #" Share of work units that are done, 0–1.
+    progress is done_units / nullif(units.sum(), 0)
+}
+
+#" Per engagement and stage, the derived stage state: done, active, upcoming or empty. Several
+#" stages can be active at once on types whose stages follow their phases.
+source: engagement_stages is postgres.table('semantic.engagement_stages') extend {
+  measure:
+    stage_rows is count()
+    #" Stages currently active; can be more than one per engagement.
+    active_stages is count() { where: state = 'active' }
+}
+
+#" A typed, time-bound unit of work for a client.
+source: engagements is postgres.table('public.engagements') extend {
+  primary_key: id
+  rename: engagement_name is name
+  except: slack_channel_id, internal_slack_channel_id, harvest_project_id, expected_scope, health, details
+  join_one: clients with client_id
+  join_one: engagement_types with type_key
+  join_many: work_units on work_units.engagement_id = id
+  join_many: engagement_stages on engagement_stages.engagement_id = id
+  dimension:
+    is_open is status = 'active' or status = 'paused'
+    #" Days since the engagement started.
+    running_days is days(started_at to now)
+  measure:
+    engagement_count is count()
+    #" Active or paused.
+    open_engagements is count() { where: is_open }
+
+  #" Every open engagement with its progress and how long it's been running.
+  view: portfolio is {
+    where: is_open
+    group_by: clients.client_name, engagement_name, engagement_types.type_name, status, running_days
+    aggregate: work_units.done_units, work_units.total_units, work_units.progress
+    order_by: client_name, engagement_name
+  }
+
+  #" Open engagements per type and status.
+  view: by_type is {
+    group_by: engagement_types.type_name, status
+    aggregate: engagement_count
+  }
+
+  #" Which stages are active right now, across every open engagement.
+  view: active_stage_mix is {
+    where: is_open and engagement_stages.state = 'active'
+    group_by: engagement_types.type_name, engagement_stages.stage_label
+    aggregate: engagement_count
+    order_by: engagement_count desc
+  }
+}
+
+# ---------------------------------------------------------------- deliverables
+
+#" A tracked unit of work on an engagement (phase, milestone, dashboard, tile, curriculum module),
+#" with its derived dependency state. Internal notes and client threads aren't modelled here.
+source: deliverables is postgres.table('semantic.deliverable_facts') extend {
+  primary_key: deliverable_id
+  join_one: engagements with engagement_id
+  join_one: clients with client_id
+  join_one: assignee is users with internal_assignee_user_id
+  #" blocked · maybe_unblocked · waiting · clear, from the manual flag plus blocker edges.
+  dimension: dependency is dep_state
+  measure:
+    deliverable_count is count()
+    done_count is count() { where: pipeline_status = 'done' }
+    #" Flagged blocked, with something still unfinished (or nothing) to wait on.
+    blocked_count is count() { where: dep_state = 'blocked' }
+    #" Needs someone to act: a block flag, a stale block flag, or started work held up by a dependency. Not ordinary sequencing.
+    attention_count is count() { where: needs_attention }
+    #" Past its target date and not finished.
+    overdue_count is count() { where: is_overdue }
+    #" Sum of estimated hours.
+    estimated_hours is hours_estimated.sum()
+
+  #" Everything that needs someone's attention: flagged blocks, stale block flags, and started work held up by a dependency.
+  view: needs_attention_list is {
+    where: needs_attention and engagements.is_open
+    group_by: clients.client_name, engagements.engagement_name, kind_label, name, pipeline_status, dep_state, blocked_reason
+    order_by: client_name
+  }
+
+  #" Open, overdue deliverables by assignee.
+  view: overdue_by_assignee is {
+    where: is_overdue and engagements.is_open
+    group_by: assignee.user_name
+    aggregate: overdue_count, estimated_hours
+    order_by: overdue_count desc
+  }
+
+  #" How many deliverables sit in each pipeline status, per kind.
+  view: status_mix is {
+    where: not not_applicable
+    group_by: kind_label, pipeline_status
+    aggregate: deliverable_count
+    order_by: kind_label
+  }
+}
+
+# ---------------------------------------------------------------- team
+
+#" Who is on which engagement, and in what role (owner, collaborator, viewer).
+source: memberships is postgres.sql("""
+  SELECT engagement_id, user_id, role::text AS role, viewer_scope FROM public.engagement_memberships
+""") extend {
+  join_one: users with user_id
+  join_one: engagements with engagement_id
+  measure:
+    #" Engagement memberships, any role.
+    assignments is count()
+    #" Engagements the person owns (the single owner membership).
+    owned is count() { where: role = 'owner' }
+
+  #" Internal people's open assignments, by role.
+  view: team_load is {
+    where: users.is_internal and engagements.is_open
+    group_by: users.user_name
+    aggregate: owned, assignments
+    order_by: assignments desc
+  }
+}
+
+# ---------------------------------------------------------------- opportunities
+
+#" What opportunities are made of: fixed bid, time & materials, or retainer.
+source: products is postgres.table('public.products') extend {
+  primary_key: id
+  rename: product_name is name
+}
+
+#" One product on an opportunity: quantity × its own unit price.
+source: line_items is postgres.table('public.opportunity_line_items') extend {
+  primary_key: id
+  join_one: products with product_id
+  #" Quantity × unit price.
+  dimension: line_total is quantity * unit_price
+  #" Sum of line totals.
+  measure: line_amount is line_total.sum()
+}
+
+#" A deal on a client, with its amount (always the sum of its line items), effective probability and
+#" forecast category (the stage's defaults unless overridden while open), and weighted amount.
+source: opportunities is postgres.table('semantic.opportunity_facts') extend {
+  primary_key: opportunity_id
+  join_one: clients with client_id
+  join_one: owner is users with owner_user_id
+  join_many: items is line_items on items.opportunity_id = opportunity_id
+  rename: deal_source is `source`
+  dimension:
+    #" The quarter the deal closes (or closed) in, for forecasting.
+    close_quarter is close_date.quarter
+    close_month is close_date.month
+  measure:
+    deal_count is count()
+    #" Sum of deal amounts, open and closed.
+    total_amount is amount.sum()
+    #" Amount still in play: every open deal, at face value.
+    open_pipeline is amount.sum() { where: not is_closed }
+    #" Open deals weighted by their effective probability.
+    weighted_pipeline is weighted_amount.sum() { where: not is_closed }
+    #" Amount on Closed Won deals.
+    won_amount is amount.sum() { where: is_won }
+    #" Amount on Closed Lost deals.
+    lost_amount is amount.sum() { where: is_lost }
+    won_deals is count() { where: is_won }
+    closed_deals is count() { where: is_closed }
+    #" Won ÷ closed, by count of deals, 0–1.
+    win_rate is won_deals / nullif(closed_deals, 0)
+    #" Mean deal amount.
+    average_deal is amount.avg()
+
+  #" Open pipeline per stage, in pipeline order.
+  view: pipeline_by_stage is {
+    where: not is_closed
+    group_by: stage_label, stage_order
+    aggregate: deal_count, open_pipeline, weighted_pipeline
+    order_by: stage_order
+  }
+
+  #" Per close quarter: won, commit, best case and open pipeline, raw and weighted.
+  view: forecast_by_quarter is {
+    group_by: close_quarter
+    aggregate:
+      won_amount
+      commit_amount is amount.sum() { where: not is_closed and effective_forecast_category = 'commit' }
+      best_case_amount is amount.sum() { where: not is_closed and effective_forecast_category = 'best_case' }
+      open_pipeline
+      weighted_pipeline
+    order_by: close_quarter
+  }
+
+  #" Win rate and totals per owner.
+  view: win_rate_by_owner is {
+    group_by: owner.user_name
+    aggregate: deal_count, won_deals, closed_deals, win_rate, won_amount, open_pipeline
+    order_by: won_amount desc
+  }
+
+  #" Where deals come from, and how they convert.
+  view: by_source is {
+    group_by: deal_source
+    aggregate: deal_count, won_deals, win_rate, total_amount
+    order_by: total_amount desc
+  }
+
+  #" Revenue by product, split into won and still open.
+  view: revenue_by_product is {
+    group_by: items.products.product_name, items.products.pricing_model
+    aggregate:
+      won_product_amount is items.line_amount { where: is_won }
+      open_product_amount is items.line_amount { where: not is_closed }
+    order_by: won_product_amount desc
+  }
+
+  #" Won deals that no engagement delivers yet: handoffs that haven't happened.
+  view: won_without_engagement_list is {
+    where: won_without_engagement
+    group_by: clients.client_name, name, close_date, owner.user_name
+    aggregate: total_amount
+  }
+}
+
+# ---------------------------------------------------------------- the event spine
+
+#" Every write the app has made, append-only. Useful for activity and throughput over time.
+source: events is postgres.table('public.events') extend {
+  primary_key: id
+  join_one: actor is users with actor_user_id
+  dimension: event_week is occurred_at.week
+  measure: event_count is count()
+
+  #" Writes per week, by what was written.
+  view: weekly_activity is {
+    group_by: event_week, entity_type
+    aggregate: event_count
+    order_by: event_week desc
+  }
+
+  #" Deliverables completed per week.
+  view: completions_per_week is {
+    where: event_type = 'deliverable_completed'
+    group_by: event_week
+    aggregate: event_count
+    order_by: event_week desc
+  }
+
+  #" Who's writing the most.
+  view: most_active is {
+    group_by: actor.user_name
+    aggregate: event_count
+    order_by: event_count desc
+    limit: 10
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "csm-semantic-layer",
+  "private": true,
+  "description": "Malloy semantic model over the CSM platform's Postgres (CLAUDE.md §3 Semantic layer).",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "compile": "node compile.mjs",
+    "query": "node query.mjs"
+  },
+  "dependencies": {
+    "@malloydata/malloy": "0.0.434",
+    "@malloydata/db-postgres": "0.0.434"
+  }
+}
