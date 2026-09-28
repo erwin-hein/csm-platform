@@ -792,7 +792,18 @@ Items raised during the post-PoC iterations (concurrent stages, the portal slice
 
 The CRM slice and module-based access (raised 2026-09-25) were resolved the same day and folded into §2/§3 — see §6.
 
-Malloy as a semantic layer (raised 2026-09-28) was resolved the same day and folded into §3/§4 — see §6. **None open.**
+Malloy as a semantic layer (raised 2026-09-28) was resolved the same day and folded into §3/§4 — see §6.
+
+**Open: aggregate screens at scale (raised 2026-09-28).** Measured on the demo data scaled 500× (3,500 engagements, 43k deliverables):
+- **The problem.** Board cards, the portfolio and the Team capacity view derive each engagement's progress, stages and deadlines one at a time in Python, about 12 queries per card. That's about 20 ms per card: 50 cards ≈ 1 s, 500 ≈ 12 s. It grows with the number of cards on screen, not with total data. Invisible at demo size; noticeable once there are 50–100 open engagements.
+- **Already done.** Three missing foreign-key indexes (migration 0008) roughly halve it.
+- **The proposal.** Have those aggregate screens read the `semantic` views in one set-based query each, filtered by what the viewer can see. The benchmark suggests about 100–200 ms for the whole portfolio. Single-record pages and every write stay in Python.
+- **Decision needed.** This inverts the current rule: SQL would become the definition of progress, dep_state and stage state, with Python checking it, rather than the reverse.
+- **Also required.** The views use CTEs that compute everything before filtering; one engagement costs about as much as all of them (35–60 ms). They'd need a per-engagement-filterable form first.
+- **Not the answer.** Routing app reads through Malloy itself: that needs a Node runtime, fits record-level CRUD with per-user access poorly, and would add nothing over reading the views directly.
+- **Revisit when** the portfolio feels slow in real use.
+
+The semantic views themselves aren't a runtime concern: they're plain views, recomputed only when queried, and today only `/admin/semantic` queries them (~20–440 ms each over all data at 500×). If a dashboard ever makes one heavy, it can become a materialized view refreshed on a schedule or from an event handler, one migration, invisible to readers.
 
 ---
 

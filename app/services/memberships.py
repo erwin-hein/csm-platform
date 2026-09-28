@@ -50,7 +50,7 @@ def assign_member(db: Session, actor: User, engagement_id: uuid.UUID, *, user_id
     if user is None or user.status != "active":
         raise NotFound("User not found")
     if user.user_type != "internal":
-        # client_external grants belong to the portal, which is out of PoC scope.
+        # client users get access from the engagement's Client access panel (services/client_portal.py), not here.
         raise ValidationError("Only internal users can be assigned here")
     if not user.can("engagements"):
         raise ValidationError(f"{user.label} has no access to engagements; an admin can grant it under Access")
